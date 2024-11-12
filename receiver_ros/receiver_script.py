@@ -3,8 +3,8 @@ import rospy
 import sys
 from std_msgs.msg import String  # Adjust if needed for specific data types
 
-# Default IP for UDP receiving (from your `ifconfig` output)
-DEFAULT_UDP_IP = "192.168.50.243"
+# Default IP for UDP receiving (binds to all interfaces if no IP is provided)
+DEFAULT_UDP_IP = "0.0.0.0"
 UDP_PORT = 5005
 
 # Parse command-line arguments
@@ -13,7 +13,7 @@ if len(sys.argv) > 1:
     print(f"Using provided IP address: {UDP_IP}")
 else:
     UDP_IP = DEFAULT_UDP_IP
-    print(f"No IP address provided. Using default IP: {UDP_IP}")
+    print(f"No IP address provided. Binding to all interfaces (0.0.0.0)")
 
 # Initialize ROS node
 rospy.init_node('fingie_sensors', anonymous=True)
