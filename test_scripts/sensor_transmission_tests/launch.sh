@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Kill any existing sensor or transmission scripts
+pkill -f proximity_sensor.py
+pkill -f pressure_sensor.py
+pkill -f emg_sensor.py
+pkill -f imu_sensor.py
+pkill -f transmission_script.py
+
 # Function to start a sensor script if specified
 start_sensor() {
     sensor=$1
@@ -7,10 +14,14 @@ start_sensor() {
     if [ -f "$script_name" ]; then
         echo "Starting $sensor Sensor script..."
         python3 "$script_name" &
+        pids+=($!)  # Keep track of the process ID
     else
         echo "Script for $sensor not found: $script_name"
     fi
 }
+
+# Array to hold process IDs of background sensor scripts
+pids=()
 
 # Flags to track which sensors to start
 start_proximity=false
@@ -63,7 +74,7 @@ if [ "$start_imu" = true ]; then
     start_sensor "imu"
 fi
 
-# Wait to ensure selected sensors are running
+# Wait a moment to ensure selected sensors are running
 sleep 2
 
 # Prepare list of sensors to transmit as an array
@@ -76,7 +87,20 @@ sensors_to_transmit=()
 # Debug: Print sensors to transmit
 echo "Sensors to transmit: ${sensors_to_transmit[@]}"
 
-# Launch the transmission script with sensor arguments
+# Trap Ctrl+C (SIGINT) and kill all background processes
+trap ctrl_c INT
+
+function ctrl_c() {
+    echo "Terminating all sensor scripts..."
+    for pid in "${pids[@]}"; do
+        kill $pid 2>/dev/null
+    done
+    exit
+}
+
+# Start the transmission script in the foreground
 echo "Starting Transmission script..."
 python3 transmission_script.py "${sensors_to_transmit[@]}"
 
+# After transmission script exits, kill all background processes
+ctrl_c

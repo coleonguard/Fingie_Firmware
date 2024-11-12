@@ -51,11 +51,15 @@ while True:
             data, _ = sock.recvfrom(1024)  # Adjust buffer size as needed
             data_package[sensor] = data.decode()
         except socket.timeout:
-            data_package[sensor] = "No Data"
+            # Instead of assigning fake data, we can skip or assign None
+            data_package[sensor] = None
 
-    # Send aggregated data to the receiver
-    message = f"Data Package: {data_package}"
-    send_sock.sendto(message.encode(), (UDP_IP, UDP_PORT))
-    print(f"Sent: {message}")
+    # Only send data if at least one sensor has valid data
+    if any(value is not None for value in data_package.values()):
+        message = f"Data Package: {data_package}"
+        send_sock.sendto(message.encode(), (UDP_IP, UDP_PORT))
+        print(f"Sent: {message}")
+    else:
+        print("No data received from sensors.")
 
     time.sleep(0.01)  # Adjust for the desired send frequency (e.g., 100 Hz)
