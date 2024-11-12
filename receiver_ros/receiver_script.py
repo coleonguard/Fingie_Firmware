@@ -15,7 +15,16 @@ else:
     UDP_IP = DEFAULT_UDP_IP
     print(f"No IP address provided. Binding to all interfaces (0.0.0.0)")
 
-# Initialize ROS node
+# Initialize UDP socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    sock.bind((UDP_IP, UDP_PORT))
+    print(f"Listening for UDP data on {UDP_IP}:{UDP_PORT}")
+except Exception as e:
+    print(f"Failed to bind socket: {e}")
+    sys.exit(1)  # Exit if binding fails
+
+# Initialize ROS node after confirming socket is bound
 rospy.init_node('fingie_sensors', anonymous=True)
 
 # Define ROS publishers with the `fingie_sensors` namespace
@@ -25,11 +34,6 @@ publishers = {
     'emg': rospy.Publisher('/fingie_sensors/emg', String, queue_size=10),
     'imu': rospy.Publisher('/fingie_sensors/imu', String, queue_size=10)
 }
-
-# Initialize UDP socket
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind((UDP_IP, UDP_PORT))
-print(f"Listening for UDP data on {UDP_IP}:{UDP_PORT}")
 
 def process_and_publish(data_package):
     """Publish each piece of sensor data to the respective ROS topic."""
