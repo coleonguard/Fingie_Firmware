@@ -2,6 +2,7 @@ import socket
 import rospy
 import sys
 from std_msgs.msg import String  # Adjust if needed for specific data types
+import json  # Import JSON module
 
 # Default IP for UDP receiving (binds to all interfaces if no IP is provided)
 DEFAULT_UDP_IP = "0.0.0.0"
@@ -48,12 +49,12 @@ def process_and_publish(data_package):
 while not rospy.is_shutdown():
     try:
         # Receive UDP data
-        data, _ = sock.recvfrom(4096)  # Buffer size
+        data, _ = sock.recvfrom(4096)
         decoded_data = data.decode()
         print(f"Received: {decoded_data}")
 
-        # Convert received data into dictionary format
-        data_package = eval(decoded_data)  # Assume data is in a dictionary-like format
+        # Deserialize the JSON data
+        data_package = json.loads(decoded_data)
         process_and_publish(data_package)
 
     except KeyboardInterrupt:
@@ -61,6 +62,6 @@ while not rospy.is_shutdown():
         break
     except Exception as e:
         print(f"Error receiving or processing data: {e}")
-
+        
 # Close socket on exit
 sock.close()

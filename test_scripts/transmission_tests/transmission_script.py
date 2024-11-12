@@ -3,6 +3,7 @@ import time
 import sys
 import struct
 import fcntl
+import json  # Import JSON module
 
 # Function to get local IP address
 def get_local_ip(interface="wlan0"):
@@ -99,7 +100,7 @@ try:
                 data_package[sensor] = "No Data"
 
         # Broadcast the aggregated data package
-        message = f"Data Package: {data_package}"
+        message = json.dumps(data_package)
         send_sock.sendto(message.encode(), (UDP_IP, UDP_PORT))
         print(f"Sent: {message}")
 
