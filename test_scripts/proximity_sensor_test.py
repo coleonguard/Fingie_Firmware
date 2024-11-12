@@ -1,6 +1,7 @@
 import smbus2
 import time
 
+######## NOTE THAT THIS IS FOR THE INDEX FINGER, LOW., PORT ON THE SIDE
 # I2C addresses
 MUX_ADDRESS = 0x70       # TCA9548A multiplexer address
 CHANNEL = 4              # Channel to enable on the multiplexer
