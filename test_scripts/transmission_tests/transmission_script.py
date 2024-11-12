@@ -5,7 +5,7 @@ import struct
 import fcntl
 
 # Function to get local IP address
-def get_local_ip():
+def get_local_ip(interface="wlan0"):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         # Connect to an external host; it doesn't actually send any data
@@ -16,10 +16,9 @@ def get_local_ip():
     return local_ip
 
 # Function to get subnet mask
-def get_subnet_mask(ifname="eth0"):
+def get_subnet_mask(ifname="wlan0"):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        # Retrieve the subnet mask of the specified interface
         subnet_mask = socket.inet_ntoa(
             fcntl.ioctl(
                 s.fileno(),
@@ -38,11 +37,17 @@ def calculate_broadcast_address(ip, mask):
     broadcast_bytes = ip_bytes | ~mask_bytes & 0xFFFFFFFF
     return socket.inet_ntoa(struct.pack("!I", broadcast_bytes))
 
-# Get local IP and subnet mask
-local_ip = get_local_ip()
-subnet_mask = get_subnet_mask("eth0")  # Use your actual network interface, e.g., "wlan0" for Wi-Fi
+# Network and broadcast setup
+interface = "wlan0"  # Change to "eth0" if using Ethernet
+local_ip = get_local_ip(interface)
+subnet_mask = get_subnet_mask(interface)
 UDP_IP = calculate_broadcast_address(local_ip, subnet_mask)
 UDP_PORT = 5005
+
+# Debug: Print network information
+print(f"Local IP: {local_ip}")
+print(f"Subnet Mask: {subnet_mask}")
+print(f"Broadcast IP: {UDP_IP}")
 
 # Local ports for each sensor data source
 SENSOR_PORTS = {
@@ -52,7 +57,7 @@ SENSOR_PORTS = {
     "imu": 6003
 }
 
-# Check for arguments to determine which sensors to listen to
+# Determine enabled sensors from command-line arguments, or enable all by default
 if len(sys.argv) > 1:
     enabled_sensors = sys.argv[1:]
 else:
@@ -79,22 +84,29 @@ for sensor in enabled_sensors:
 send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # Enable broadcasting
 
-print(f"Broadcasting to: {UDP_IP}")
+print(f"Broadcasting to: {UDP_IP}:{UDP_PORT}")
 
-while True:
-    data_package = {}
+try:
+    while True:
+        data_package = {}
 
-    # Collect data from each enabled sensor socket
-    for sensor, sock in sensors.items():
-        try:
-            data, _ = sock.recvfrom(1024)  # Adjust buffer size as needed
-            data_package[sensor] = data.decode()
-        except socket.timeout:
-            data_package[sensor] = "No Data"
+        # Collect data from each enabled sensor socket
+        for sensor, sock in sensors.items():
+            try:
+                data, _ = sock.recvfrom(1024)  # Adjust buffer size as needed
+                data_package[sensor] = data.decode()
+            except socket.timeout:
+                data_package[sensor] = "No Data"
 
-    # Send aggregated data to all devices on the network
-    message = f"Data Package: {data_package}"
-    send_sock.sendto(message.encode(), (UDP_IP, UDP_PORT))
-    print(f"Sent: {message}")
+        # Broadcast the aggregated data package
+        message = f"Data Package: {data_package}"
+        send_sock.sendto(message.encode(), (UDP_IP, UDP_PORT))
+        print(f"Sent: {message}")
 
-    time.sleep(0.01)  # Adjust for the desired send frequency (e.g., 100 Hz)
+        time.sleep(0.01)  # Adjust for desired send frequency (e.g., 100 Hz)
+
+except KeyboardInterrupt:
+    print("Transmission interrupted by user.")
+finally:
+    send_sock.close()
+    print("Socket closed.")
