@@ -5,7 +5,7 @@ from scipy.spatial.transform import Rotation as R
 
 # Constants
 IMU_RATE = 200  # Sampling rate in Hz
-IMU_ID = "154143"  # Replace with your IMU's actual serial number
+IMU_ID = "133931"  # Last sequence of digits on the top of the IMU... this is the one thats usually taped to foam
 
 class IMUData:
     """Simple class to hold IMU data without dataclasses."""
