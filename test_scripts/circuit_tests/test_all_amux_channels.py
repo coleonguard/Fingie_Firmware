@@ -52,7 +52,7 @@ def test_all_amux_channels():
             print("amux1 channel values:")
             for channel in range(16):
                 select_channel(AMUX1_PINS, channel)
-                time.sleep(0.05)  # Small delay for stable switching
+                time.sleep(0.01)  # Small delay for stable switching
                 adc_value = read_adc_channel(0)  # Read from MCP3008 CH0
                 print(f"  amux1 channel {channel}: {adc_value}")
 
@@ -60,12 +60,12 @@ def test_all_amux_channels():
             print("amux2 channel values:")
             for channel in range(16):
                 select_channel(AMUX2_PINS, channel)
-                time.sleep(0.05)  # Small delay for stable switching
+                time.sleep(0.01)  # Small delay for stable switching
                 adc_value = read_adc_channel(0)  # Read from MCP3008 CH0
                 print(f"  amux2 channel {channel}: {adc_value}")
 
             print("\n--- End of cycle ---\n")
-            time.sleep(1)  # Delay before next cycle for readability
+            time.sleep(.1)  # Delay before next cycle for readability
 
     except KeyboardInterrupt:
         print("Test stopped by user.")
