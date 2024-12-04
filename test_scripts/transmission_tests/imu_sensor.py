@@ -1,14 +1,10 @@
-# imu_sensor.py
-
 import os
 import time
 import socket
 import mscl
-from scipy.spatial.transform import Rotation as R
 
 # Constants
 IMU_RATE = 200  # Adjust to desired sampling rate
-IMU_ID = "156124"  # The IMU ID from the device
 UDP_IP = "127.0.0.1"
 UDP_PORT = 6003
 
@@ -24,34 +20,41 @@ class IMUData:
 
 class IMU:
     """Class to manage a single IMU and extract roll, pitch, yaw data."""
-    
-    def __init__(self, imu_id, rate=IMU_RATE):
-        self.imu_id = imu_id
+    def __init__(self, device_port, rate=IMU_RATE):
         self.rate = rate
+        self.device_port = device_port
+        self.imu_node = None
         self._enable_port()
-        self.imu_node = self._set_up_imu()
+        self._set_up_imu()
 
     def _enable_port(self):
-        """Enables access to the IMU serial port. Adjust if using a different device node."""
-        os.system('sudo chmod 777 /dev/ttyACM0') 
+        """Enables access to the IMU serial port."""
+        os.system(f'sudo chmod 777 {self.device_port}')
 
     def _set_up_imu(self):
         """Sets up the IMU connection and data channels."""
-        node = mscl.InertialNode(mscl.Connection.Serial('/dev/ttyACM0'))  # Adjust if needed
-        ahrs_channels = mscl.MipChannels()
-        ahrs_channels.append(mscl.MipChannel(mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES, mscl.SampleRate.Hertz(self.rate)))
-        
-        node.setToIdle()
-        node.setActiveChannelFields(mscl.MipTypes.CLASS_AHRS_IMU, ahrs_channels)
-        node.enableDataStream(mscl.MipTypes.CLASS_AHRS_IMU)
-        node.resume()
-        
-        return node
+        try:
+            connection = mscl.Connection.Serial(self.device_port)
+            self.imu_node = mscl.InertialNode(connection)
+
+            # Configure data stream
+            ahrs_channels = mscl.MipChannels()
+            ahrs_channels.append(
+                mscl.MipChannel(mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES,
+                                mscl.SampleRate.Hertz(self.rate))
+            )
+
+            self.imu_node.setToIdle()
+            self.imu_node.setActiveChannelFields(mscl.MipTypes.CLASS_AHRS_IMU, ahrs_channels)
+            self.imu_node.enableDataStream(mscl.MipTypes.CLASS_AHRS_IMU)
+            self.imu_node.resume()
+
+        except mscl.Error as e:
+            raise RuntimeError(f"Failed to initialize IMU on {self.device_port}: {e}")
 
     def get_data(self):
         """Fetches roll, pitch, and yaw data from the IMU."""
         imu_data = IMUData()
-
         packets = self.imu_node.getDataPackets(0)
         if packets:
             for data_point in packets[-1].data():
@@ -64,14 +67,65 @@ class IMU:
                         imu_data.yaw = data_point.as_double()
         return imu_data
 
+def initialize_imus():
+    """Try initializing both IMUs and assign roles based on success."""
+    PORT_BACK = "/dev/ttyACM0"
+    PORT_WRIST = "/dev/ttyACM1"
+
+    imu_back, imu_wrist = None, None
+
+    try:
+        print(f"Attempting to initialize back of hand IMU on {PORT_BACK}...")
+        imu_back = IMU(PORT_BACK)
+        print("Back of hand IMU initialized successfully.")
+    except RuntimeError:
+        print(f"Failed to initialize back of hand IMU on {PORT_BACK}. Trying wrist IMU here instead...")
+        imu_wrist = IMU(PORT_BACK)
+        print("Wrist IMU initialized successfully on back of hand port.")
+
+    try:
+        print(f"Attempting to initialize wrist IMU on {PORT_WRIST}...")
+        imu_wrist = IMU(PORT_WRIST)
+        print("Wrist IMU initialized successfully.")
+    except RuntimeError:
+        print(f"Failed to initialize wrist IMU on {PORT_WRIST}. Trying back of hand IMU here instead...")
+        imu_back = IMU(PORT_WRIST)
+        print("Back of hand IMU initialized successfully on wrist port.")
+
+    return imu_back, imu_wrist
+
 if __name__ == "__main__":
-    imu = IMU(IMU_ID, IMU_RATE)
-    # Sending at 100 Hz (adjust as needed)
-    send_interval = 1.0 / 100.0
+    # Initialize IMUs
+    imu_back, imu_wrist = initialize_imus()
+
+    if not imu_back or not imu_wrist:
+        print("Error: Could not initialize both IMUs. Please check connections.")
+        exit(1)
+
+    print("IMUs initialized and assigned correctly.")
+    print(f"Back of hand IMU: {imu_back.device_port}")
+    print(f"Wrist IMU: {imu_wrist.device_port}")
+
+    # Send data at the desired rate
+    send_interval = 1.0 / IMU_RATE
 
     while True:
-        data = imu.get_data()
-        # Format the message as needed; here we just send roll, pitch, yaw
-        msg = f"{data.roll:.2f} {data.pitch:.2f} {data.yaw:.2f}"
-        sock.sendto(msg.encode(), (UDP_IP, UDP_PORT))
-        time.sleep(send_interval)
+        try:
+            # Get data from both IMUs
+            data_back = imu_back.get_data()
+            data_wrist = imu_wrist.get_data()
+
+            # Format and send data for each IMU
+            msg_back = f"back of hand: {data_back.roll:.2f} {data_back.pitch:.2f} {data_back.yaw:.2f}"
+            msg_wrist = f"wrist: {data_wrist.roll:.2f} {data_wrist.pitch:.2f} {data_wrist.yaw:.2f}"
+
+            # Send messages
+            sock.sendto(msg_back.encode(), (UDP_IP, UDP_PORT))
+            sock.sendto(msg_wrist.encode(), (UDP_IP, UDP_PORT))
+
+            # Wait for the next send interval
+            time.sleep(send_interval)
+
+        except RuntimeError as e:
+            print(f"Error reading IMU data: {e}")
+            break
