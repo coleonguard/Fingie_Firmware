@@ -8,7 +8,7 @@ from scipy.spatial.transform import Rotation as R
 
 # Constants
 IMU_RATE = 200  # Adjust to desired sampling rate
-IMU_ID = "133931"  # The IMU ID from the device
+IMU_ID = "156124"  # The IMU ID from the device
 UDP_IP = "127.0.0.1"
 UDP_PORT = 6003
 
