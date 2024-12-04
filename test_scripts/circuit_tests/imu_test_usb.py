@@ -7,6 +7,7 @@ from scipy.spatial.transform import Rotation as R
 # Constants
 IMU_RATE = 200  # Sampling rate in Hz
 IMU_IDS = ["133931", "133932"]  # List of IMU IDs
+MAX_RETRIES = 3  # Maximum number of retries for each port
 
 class IMUData:
     """Simple class to hold IMU data without dataclasses."""
@@ -21,6 +22,7 @@ class IMU:
     def __init__(self, port, rate=IMU_RATE):
         self.port = port
         self.rate = rate
+        self.imu_node = None
         self._enable_port()
         self.imu_node = self._set_up_imu()
 
@@ -44,7 +46,9 @@ class IMU:
     def get_data(self):
         """Fetches roll, pitch, and yaw data from the IMU."""
         imu_data = IMUData()
-
+        if not self.imu_node:
+            raise RuntimeError("IMU node is not initialized.")
+        
         packets = self.imu_node.getDataPackets(0)
         if packets:
             for data_point in packets[-1].data():
@@ -59,7 +63,7 @@ class IMU:
 
     def get_imu_id(self):
         """Fetches the IMU identifier."""
-        # Example logic: Read IMU info packet to get ID (simplified for illustration)
+        # Example logic: Read IMU info packet to get ID
         info = self.imu_node.getDeviceInfo()
         return info.deviceSerialNumber()
 
@@ -73,14 +77,32 @@ def detect_imus():
     """Detect and assign IMUs to their respective ports."""
     imu_mapping = {}
     available_ports = auto_detect_ports()
+    tried_ports = set()
+
     for port in available_ports:
-        try:
-            imu = IMU(port)
-            imu_id = imu.get_imu_id()
-            if imu_id in IMU_IDS:
-                imu_mapping[imu_id] = port
-        except Exception as e:
-            print(f"Failed to communicate with IMU on port {port}: {e}")
+        if port in tried_ports:
+            continue
+        retries = 0
+        while retries < MAX_RETRIES:
+            try:
+                print(f"Trying port {port}...")
+                imu = IMU(port)
+                imu_id = imu.get_imu_id()
+                if imu_id in IMU_IDS:
+                    if imu_id in imu_mapping:
+                        print(f"IMU ID {imu_id} is already assigned. Skipping.")
+                    else:
+                        imu_mapping[imu_id] = port
+                        print(f"Assigned IMU ID {imu_id} to port {port}.")
+                    break
+            except Exception as e:
+                retries += 1
+                print(f"Failed to communicate with IMU on port {port} (attempt {retries}): {e}")
+                if retries >= MAX_RETRIES:
+                    print(f"Skipping port {port} after {MAX_RETRIES} failed attempts.")
+            finally:
+                tried_ports.add(port)
+
     return imu_mapping
 
 def main():
@@ -95,8 +117,11 @@ def main():
 
     while True:
         for imu_id, imu in imus.items():
-            data = imu.get_data()
-            print(f'IMU {imu_id} - Roll: {data.roll:.2f}, Pitch: {data.pitch:.2f}, Yaw: {data.yaw:.2f}')
+            try:
+                data = imu.get_data()
+                print(f'IMU {imu_id} - Roll: {data.roll:.2f}, Pitch: {data.pitch:.2f}, Yaw: {data.yaw:.2f}')
+            except Exception as e:
+                print(f"Error reading data from IMU {imu_id} on port {imu.port}: {e}")
         time.sleep(1 / IMU_RATE)  # Adjust sleep for desired sampling rate
 
 if __name__ == "__main__":
