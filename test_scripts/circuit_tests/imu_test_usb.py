@@ -6,7 +6,7 @@ from scipy.spatial.transform import Rotation as R
 
 # Constants
 IMU_RATE = 200  # Sampling rate in Hz
-IMU_IDS = ["133931", "133932"]  # List of IMU IDs
+IMU_IDS = ["133931", "119452"]  # List of IMU IDs
 MAX_RETRIES = 3  # Maximum number of retries for each port
 
 class IMUData:
