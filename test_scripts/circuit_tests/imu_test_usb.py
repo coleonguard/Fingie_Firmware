@@ -1,93 +1,58 @@
 import os
 import time
 import mscl
-from scipy.spatial.transform import Rotation as R
 
 # Constants
 IMU_RATE = 200  # Sampling rate in Hz
-IMU_IDS = {"back of hand": "133931", "wrist": "156124"}  # IMU IDs for identification
+IMU_PORT = "/dev/ttyACM0"  # Adjust as needed
 
 class IMUData:
-    """Simple class to hold IMU data without dataclasses."""
+    """Simple class to hold IMU data."""
     def __init__(self):
         self.roll = 0.0
         self.pitch = 0.0
         self.yaw = 0.0
 
-class IMU:
-    """Class to manage a single IMU and extract roll, pitch, yaw data."""
-    
-    def __init__(self, port, imu_id, rate=IMU_RATE):
-        self.port = port
-        self.imu_id = imu_id
-        self.rate = rate
-        self._enable_port()
-        self.imu_node = self._set_up_imu()
-
-    def _enable_port(self):
-        """Enables access to the IMU serial port."""
-        os.system(f'sudo chmod 777 {self.port}')
-
-    def _set_up_imu(self):
-        """Sets up the IMU connection and data channels."""
-        node = mscl.InertialNode(mscl.Connection.Serial(self.port))
-        ahrs_channels = mscl.MipChannels()
-        ahrs_channels.append(mscl.MipChannel(mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES, mscl.SampleRate.Hertz(self.rate)))
-        
-        node.setToIdle()
-        node.setActiveChannelFields(mscl.MipTypes.CLASS_AHRS_IMU, ahrs_channels)
-        node.enableDataStream(mscl.MipTypes.CLASS_AHRS_IMU)
-        node.resume()
-        
-        return node
-
-    def get_data(self):
-        """Fetches roll, pitch, and yaw data from the IMU."""
-        imu_data = IMUData()
-
-        packets = self.imu_node.getDataPackets(0)
-        if packets:
-            for data_point in packets[-1].data():
-                if data_point.field() == mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES:
-                    if data_point.qualifier() == 6:
-                        imu_data.roll = data_point.as_double()
-                    elif data_point.qualifier() == 7:
-                        imu_data.pitch = data_point.as_double()
-                    elif data_point.qualifier() == 8:
-                        imu_data.yaw = data_point.as_double()
-        return imu_data
-
-def identify_imu(port):
-    node = mscl.InertialNode(mscl.Connection.Serial(port))
-    info = node.getDeviceInfo()
-    imu_id = info.serialNumber()  # Get the IMU's serial number
-    for role, id_value in IMU_IDS.items():
-        if imu_id.endswith(id_value):
-            return role, id_value
-    raise ValueError(f"Unknown IMU ID: {imu_id}")
-
 def main():
-    imu_ports = ["/dev/ttyACM0", "/dev/ttyACM1"]  # List of potential IMU ports
-    imu_instances = {}
+    # Set permissions on port (optional if you run as sudo or have proper permissions)
+    os.system(f'sudo chmod 777 {IMU_PORT}')
 
-    # Identify and initialize IMUs
-    for port in imu_ports:
-        try:
-            role, imu_id = identify_imu(port)
-            imu_instances[role] = IMU(port, imu_id)
-            print(f"{role.capitalize()} initialized on port {port}.")
-        except Exception as e:
-            print(f"Failed to initialize IMU on port {port}: {e}")
+    # Connect to the IMU
+    node = mscl.InertialNode(mscl.Connection.Serial(IMU_PORT))
 
-    if len(imu_instances) < 2:
-        raise RuntimeError("Both IMUs (back of hand and wrist) must be connected.")
+    # Get device info
+    info = node.getDeviceInfo()
+    print("Connected to IMU with serial number:", info.serialNumber())
 
-    # Read and print data from both IMUs
+    # Set up Euler angle stream
+    ahrs_channels = mscl.MipChannels()
+    ahrs_channels.append(mscl.MipChannel(mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES,
+                                         mscl.SampleRate.Hertz(IMU_RATE)))
+
+    node.setToIdle()
+    node.setActiveChannelFields(mscl.MipTypes.CLASS_AHRS_IMU, ahrs_channels)
+    node.enableDataStream(mscl.MipTypes.CLASS_AHRS_IMU)
+    node.resume()
+
+    # Continuously read and print data
     while True:
-        for role, imu in imu_instances.items():
-            data = imu.get_data()
-            print(f"{role.capitalize()} - Roll: {data.roll:.2f}, Pitch: {data.pitch:.2f}, Yaw: {data.yaw:.2f}")
-        time.sleep(1 / IMU_RATE)  # Adjust sleep for desired sampling rate
+        packets = node.getDataPackets(0)
+        if packets:
+            data_points = packets[-1].data()
+            imu_data = IMUData()
+            for dp in data_points:
+                if dp.field() == mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES:
+                    if dp.qualifier() == 6:   # Roll
+                        imu_data.roll = dp.as_double()
+                    elif dp.qualifier() == 7: # Pitch
+                        imu_data.pitch = dp.as_double()
+                    elif dp.qualifier() == 8: # Yaw
+                        imu_data.yaw = dp.as_double()
+
+            # Print the latest Euler angles
+            print(f"Roll: {imu_data.roll:.2f}, Pitch: {imu_data.pitch:.2f}, Yaw: {imu_data.yaw:.2f}")
+
+        time.sleep(1 / IMU_RATE)
 
 if __name__ == "__main__":
     main()
