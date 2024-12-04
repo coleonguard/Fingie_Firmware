@@ -1,58 +1,67 @@
 import os
 import time
 import mscl
+from scipy.spatial.transform import Rotation as R
 
 # Constants
 IMU_RATE = 200  # Sampling rate in Hz
-IMU_PORT = "/dev/ttyACM0"  # Adjust as needed
+IMU_ID = "133931"  # Last sequence of digits on the top of the IMU... back of hand: 133931; wrist: 156124
 
 class IMUData:
-    """Simple class to hold IMU data."""
+    """Simple class to hold IMU data without dataclasses."""
     def __init__(self):
         self.roll = 0.0
         self.pitch = 0.0
         self.yaw = 0.0
 
-def main():
-    # Set permissions on port (optional if you run as sudo or have proper permissions)
-    os.system(f'sudo chmod 777 {IMU_PORT}')
+class IMU:
+    """Class to manage a single IMU and extract roll, pitch, yaw data."""
+    
+    def __init__(self, imu_id, rate=IMU_RATE):
+        self.imu_id = imu_id
+        self.rate = rate
+        self._enable_port()
+        self.imu_node = self._set_up_imu()
 
-    # Connect to the IMU
-    node = mscl.InertialNode(mscl.Connection.Serial(IMU_PORT))
+    def _enable_port(self):
+        """Enables access to the IMU serial port."""
+        os.system('sudo chmod 777 /dev/ttyACM0')  # Adjust if the IMU uses a different serial port
 
-    # Get device info
-    info = node.getDeviceInfo()
-    print("Connected to IMU with serial number:", info.serialNumber())
+    def _set_up_imu(self):
+        """Sets up the IMU connection and data channels."""
+        node = mscl.InertialNode(mscl.Connection.Serial('/dev/ttyACM0'))  # Assuming IMU is on /dev/ttyACM0
+        ahrs_channels = mscl.MipChannels()
+        ahrs_channels.append(mscl.MipChannel(mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES, mscl.SampleRate.Hertz(self.rate)))
+        
+        node.setToIdle()
+        node.setActiveChannelFields(mscl.MipTypes.CLASS_AHRS_IMU, ahrs_channels)
+        node.enableDataStream(mscl.MipTypes.CLASS_AHRS_IMU)
+        node.resume()
+        
+        return node
 
-    # Set up Euler angle stream
-    ahrs_channels = mscl.MipChannels()
-    ahrs_channels.append(mscl.MipChannel(mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES,
-                                         mscl.SampleRate.Hertz(IMU_RATE)))
+    def get_data(self):
+        """Fetches roll, pitch, and yaw data from the IMU."""
+        imu_data = IMUData()
 
-    node.setToIdle()
-    node.setActiveChannelFields(mscl.MipTypes.CLASS_AHRS_IMU, ahrs_channels)
-    node.enableDataStream(mscl.MipTypes.CLASS_AHRS_IMU)
-    node.resume()
-
-    # Continuously read and print data
-    while True:
-        packets = node.getDataPackets(0)
+        packets = self.imu_node.getDataPackets(0)
         if packets:
-            data_points = packets[-1].data()
-            imu_data = IMUData()
-            for dp in data_points:
-                if dp.field() == mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES:
-                    if dp.qualifier() == 6:   # Roll
-                        imu_data.roll = dp.as_double()
-                    elif dp.qualifier() == 7: # Pitch
-                        imu_data.pitch = dp.as_double()
-                    elif dp.qualifier() == 8: # Yaw
-                        imu_data.yaw = dp.as_double()
+            for data_point in packets[-1].data():
+                if data_point.field() == mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES:
+                    if data_point.qualifier() == 6:
+                        imu_data.roll = data_point.as_double()
+                    elif data_point.qualifier() == 7:
+                        imu_data.pitch = data_point.as_double()
+                    elif data_point.qualifier() == 8:
+                        imu_data.yaw = data_point.as_double()
+        return imu_data
 
-            # Print the latest Euler angles
-            print(f"Roll: {imu_data.roll:.2f}, Pitch: {imu_data.pitch:.2f}, Yaw: {imu_data.yaw:.2f}")
-
-        time.sleep(1 / IMU_RATE)
+def main():
+    imu = IMU(IMU_ID, IMU_RATE)
+    while True:
+        data = imu.get_data()
+        print(f'Roll: {data.roll:.2f}, Pitch: {data.pitch:.2f}, Yaw: {data.yaw:.2f}')
+        time.sleep(1 / IMU_RATE)  # Adjust sleep for desired sampling rate
 
 if __name__ == "__main__":
     main()
