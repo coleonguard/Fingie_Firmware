@@ -5,7 +5,7 @@ from scipy.spatial.transform import Rotation as R
 
 # Constants
 IMU_RATE = 200  # Sampling rate in Hz
-IMU_ID = "156124"  # Last sequence of digits on the top of the IMU... this is the one thats usually taped to foam
+IMU_IDS = {"back of hand": "133931", "wrist": "156124"}  # IMU IDs for identification
 
 class IMUData:
     """Simple class to hold IMU data without dataclasses."""
@@ -17,7 +17,8 @@ class IMUData:
 class IMU:
     """Class to manage a single IMU and extract roll, pitch, yaw data."""
     
-    def __init__(self, imu_id, rate=IMU_RATE):
+    def __init__(self, port, imu_id, rate=IMU_RATE):
+        self.port = port
         self.imu_id = imu_id
         self.rate = rate
         self._enable_port()
@@ -25,11 +26,11 @@ class IMU:
 
     def _enable_port(self):
         """Enables access to the IMU serial port."""
-        os.system('sudo chmod 777 /dev/ttyACM0')  # Adjust if the IMU uses a different serial port
+        os.system(f'sudo chmod 777 {self.port}')
 
     def _set_up_imu(self):
         """Sets up the IMU connection and data channels."""
-        node = mscl.InertialNode(mscl.Connection.Serial('/dev/ttyACM0'))  # Assuming IMU is on /dev/ttyACM0
+        node = mscl.InertialNode(mscl.Connection.Serial(self.port))
         ahrs_channels = mscl.MipChannels()
         ahrs_channels.append(mscl.MipChannel(mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES, mscl.SampleRate.Hertz(self.rate)))
         
@@ -56,11 +57,36 @@ class IMU:
                         imu_data.yaw = data_point.as_double()
         return imu_data
 
+def identify_imu(port):
+    """Identifies the IMU by ID and returns the corresponding role."""
+    node = mscl.InertialNode(mscl.Connection.Serial(port))
+    imu_id = node.deviceName()  # Assuming deviceName fetches the ID
+    for role, id_value in IMU_IDS.items():
+        if imu_id.endswith(id_value):
+            return role, id_value
+    raise ValueError(f"Unknown IMU ID: {imu_id}")
+
 def main():
-    imu = IMU(IMU_ID, IMU_RATE)
+    imu_ports = ["/dev/ttyACM0", "/dev/ttyACM1"]  # List of potential IMU ports
+    imu_instances = {}
+
+    # Identify and initialize IMUs
+    for port in imu_ports:
+        try:
+            role, imu_id = identify_imu(port)
+            imu_instances[role] = IMU(port, imu_id)
+            print(f"{role.capitalize()} initialized on port {port}.")
+        except Exception as e:
+            print(f"Failed to initialize IMU on port {port}: {e}")
+
+    if len(imu_instances) < 2:
+        raise RuntimeError("Both IMUs (back of hand and wrist) must be connected.")
+
+    # Read and print data from both IMUs
     while True:
-        data = imu.get_data()
-        print(f'Roll: {data.roll:.2f}, Pitch: {data.pitch:.2f}, Yaw: {data.yaw:.2f}')
+        for role, imu in imu_instances.items():
+            data = imu.get_data()
+            print(f"{role.capitalize()} - Roll: {data.roll:.2f}, Pitch: {data.pitch:.2f}, Yaw: {data.yaw:.2f}")
         time.sleep(1 / IMU_RATE)  # Adjust sleep for desired sampling rate
 
 if __name__ == "__main__":
