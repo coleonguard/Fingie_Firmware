@@ -5,7 +5,8 @@ from scipy.spatial.transform import Rotation as R
 
 # Constants
 IMU_RATE = 200  # Sampling rate in Hz
-IMU_ID = "133931"  # Last sequence of digits on the top of the IMU... back of hand: 133931; wrist: 156124
+BACK_OF_HAND_IMU_ID = "133931"  # Back of hand
+WRIST_IMU_ID = "156124"         # Wrist
 
 class IMUData:
     """Simple class to hold IMU data without dataclasses."""
@@ -17,21 +18,23 @@ class IMUData:
 class IMU:
     """Class to manage a single IMU and extract roll, pitch, yaw data."""
     
-    def __init__(self, imu_id, rate=IMU_RATE):
+    def __init__(self, imu_id, device_port, rate=IMU_RATE):
         self.imu_id = imu_id
         self.rate = rate
+        self.device_port = device_port
         self._enable_port()
         self.imu_node = self._set_up_imu()
 
     def _enable_port(self):
         """Enables access to the IMU serial port."""
-        os.system('sudo chmod 777 /dev/ttyACM0')  # Adjust if the IMU uses a different serial port
+        os.system(f'sudo chmod 777 {self.device_port}')
 
     def _set_up_imu(self):
         """Sets up the IMU connection and data channels."""
-        node = mscl.InertialNode(mscl.Connection.Serial('/dev/ttyACM0'))  # Assuming IMU is on /dev/ttyACM0
+        node = mscl.InertialNode(mscl.Connection.Serial(self.device_port))
         ahrs_channels = mscl.MipChannels()
-        ahrs_channels.append(mscl.MipChannel(mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES, mscl.SampleRate.Hertz(self.rate)))
+        ahrs_channels.append(mscl.MipChannel(mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES,
+                                             mscl.SampleRate.Hertz(self.rate)))
         
         node.setToIdle()
         node.setActiveChannelFields(mscl.MipTypes.CLASS_AHRS_IMU, ahrs_channels)
@@ -43,7 +46,6 @@ class IMU:
     def get_data(self):
         """Fetches roll, pitch, and yaw data from the IMU."""
         imu_data = IMUData()
-
         packets = self.imu_node.getDataPackets(0)
         if packets:
             for data_point in packets[-1].data():
@@ -57,10 +59,19 @@ class IMU:
         return imu_data
 
 def main():
-    imu = IMU(IMU_ID, IMU_RATE)
+    # Initialize both IMUs
+    imu_back = IMU(BACK_OF_HAND_IMU_ID, "/dev/ttyACM0", IMU_RATE)
+    imu_wrist = IMU(WRIST_IMU_ID, "/dev/ttyACM1", IMU_RATE)
+
     while True:
-        data = imu.get_data()
-        print(f'Roll: {data.roll:.2f}, Pitch: {data.pitch:.2f}, Yaw: {data.yaw:.2f}')
+        data_back = imu_back.get_data()
+        data_wrist = imu_wrist.get_data()
+
+        # Print data, labeling based on IMU ID
+        # Since we know BACK_OF_HAND_IMU_ID is 133931, we print back_of_hand for that one
+        print(f'back of hand: Roll: {data_back.roll:.2f}, Pitch: {data_back.pitch:.2f}, Yaw: {data_back.yaw:.2f}')
+        print(f'wrist:       Roll: {data_wrist.roll:.2f}, Pitch: {data_wrist.pitch:.2f}, Yaw: {data_wrist.yaw:.2f}')
+
         time.sleep(1 / IMU_RATE)  # Adjust sleep for desired sampling rate
 
 if __name__ == "__main__":
