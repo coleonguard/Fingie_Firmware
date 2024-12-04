@@ -1,4 +1,5 @@
 import os
+import time
 import mscl
 
 # Constants
@@ -6,8 +7,15 @@ IMU_RATE = 200  # Sampling rate in Hz
 PORT_BACK = "/dev/ttyACM0"  # Expected port for back of hand
 PORT_WRIST = "/dev/ttyACM1"  # Expected port for wrist
 
+class IMUData:
+    """Simple class to hold IMU data."""
+    def __init__(self):
+        self.roll = 0.0
+        self.pitch = 0.0
+        self.yaw = 0.0
+
 class IMU:
-    """Class to manage a single IMU connection."""
+    """Class to manage a single IMU and extract roll, pitch, yaw data."""
     def __init__(self, device_port, rate=IMU_RATE):
         self.rate = rate
         self.device_port = device_port
@@ -20,7 +28,7 @@ class IMU:
         os.system(f'sudo chmod 777 {self.device_port}')
 
     def _set_up_imu(self):
-        """Attempts to set up the IMU connection."""
+        """Sets up the IMU connection and data channels."""
         try:
             connection = mscl.Connection.Serial(self.device_port)
             self.imu_node = mscl.InertialNode(connection)
@@ -39,6 +47,21 @@ class IMU:
 
         except mscl.Error as e:
             raise RuntimeError(f"Failed to initialize IMU on {self.device_port}: {e}")
+
+    def get_data(self):
+        """Fetches roll, pitch, and yaw data from the IMU."""
+        imu_data = IMUData()
+        packets = self.imu_node.getDataPackets(0)
+        if packets:
+            for data_point in packets[-1].data():
+                if data_point.field() == mscl.MipTypes.CH_FIELD_SENSOR_EULER_ANGLES:
+                    if data_point.qualifier() == 6:
+                        imu_data.roll = data_point.as_double()
+                    elif data_point.qualifier() == 7:
+                        imu_data.pitch = data_point.as_double()
+                    elif data_point.qualifier() == 8:
+                        imu_data.yaw = data_point.as_double()
+        return imu_data
 
 def initialize_imus():
     """Try initializing both IMUs and assign roles based on success."""
@@ -67,6 +90,7 @@ def initialize_imus():
     return imu_back, imu_wrist
 
 def main():
+    # Initialize IMUs
     imu_back, imu_wrist = initialize_imus()
 
     if not imu_back or not imu_wrist:
@@ -76,6 +100,20 @@ def main():
     print("IMUs initialized and assigned correctly:")
     print(f"Back of hand IMU: {imu_back.device_port}")
     print(f"Wrist IMU: {imu_wrist.device_port}")
+
+    # Read and print data from both IMUs
+    while True:
+        try:
+            data_back = imu_back.get_data()
+            data_wrist = imu_wrist.get_data()
+
+            print(f"back of hand: Roll: {data_back.roll:.2f}, Pitch: {data_back.pitch:.2f}, Yaw: {data_back.yaw:.2f}")
+            print(f"wrist:       Roll: {data_wrist.roll:.2f}, Pitch: {data_wrist.pitch:.2f}, Yaw: {data_wrist.yaw:.2f}")
+
+            time.sleep(1 / IMU_RATE)  # Adjust sleep for desired sampling rate
+        except RuntimeError as e:
+            print(f"Error reading IMU data: {e}")
+            break
 
 if __name__ == "__main__":
     main()
