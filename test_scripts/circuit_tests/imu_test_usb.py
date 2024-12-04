@@ -1,12 +1,12 @@
 import os
 import time
 import mscl
+import serial.tools.list_ports
 from scipy.spatial.transform import Rotation as R
 
 # Constants
 IMU_RATE = 200  # Sampling rate in Hz
 IMU_IDS = ["133931", "133932"]  # List of IMU IDs
-USB_PORTS = ["/dev/ttyACM0", "/dev/ttyACM1"]  # Potential USB ports
 
 class IMUData:
     """Simple class to hold IMU data without dataclasses."""
@@ -63,17 +63,24 @@ class IMU:
         info = self.imu_node.getDeviceInfo()
         return info.deviceSerialNumber()
 
+def auto_detect_ports():
+    """Automatically detects available USB ports."""
+    ports = [port.device for port in serial.tools.list_ports.comports()]
+    print(f"Detected ports: {ports}")
+    return ports
+
 def detect_imus():
     """Detect and assign IMUs to their respective ports."""
     imu_mapping = {}
-    for port in USB_PORTS:
+    available_ports = auto_detect_ports()
+    for port in available_ports:
         try:
             imu = IMU(port)
             imu_id = imu.get_imu_id()
             if imu_id in IMU_IDS:
                 imu_mapping[imu_id] = port
         except Exception as e:
-            print(f"Failed to initialize IMU on port {port}: {e}")
+            print(f"Failed to communicate with IMU on port {port}: {e}")
     return imu_mapping
 
 def main():
