@@ -58,9 +58,9 @@ class IMU:
         return imu_data
 
 def identify_imu(port):
-    """Identifies the IMU by ID and returns the corresponding role."""
     node = mscl.InertialNode(mscl.Connection.Serial(port))
-    imu_id = node.deviceName()  # Assuming deviceName fetches the ID
+    info = node.getDeviceInfo()
+    imu_id = info.serialNumber()  # Get the IMU's serial number
     for role, id_value in IMU_IDS.items():
         if imu_id.endswith(id_value):
             return role, id_value
