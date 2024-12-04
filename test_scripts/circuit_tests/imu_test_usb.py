@@ -3,7 +3,7 @@ import time
 import mscl
 from scipy.spatial.transform import Rotation as R
 
-# Constants
+# Constantsa
 IMU_RATE = 200  # Sampling rate in Hz
 IMU_ID = "133931"  # Last sequence of digits on the top of the IMU... this is the one thats usually taped to foam
 
