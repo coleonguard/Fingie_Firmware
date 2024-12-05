@@ -118,13 +118,13 @@ if __name__ == "__main__":
             # Create a timestamp
             timestamp = time.time()
 
-            # Format and send synchronized data
-            msg_back = f"{timestamp} back_of_hand: {data_back.roll:.2f} {data_back.pitch:.2f} {data_back.yaw:.2f}"
-            msg_wrist = f"{timestamp} wrist: {data_wrist.roll:.2f} {data_wrist.pitch:.2f} {data_wrist.yaw:.2f}"
+            # Combine data from both IMUs into a single message
+            msg = (f"{timestamp} back_of_hand: {data_back.roll:.2f} {data_back.pitch:.2f} {data_back.yaw:.2f} | "
+                f"wrist: {data_wrist.roll:.2f} {data_wrist.pitch:.2f} {data_wrist.yaw:.2f}")
 
-            # Send messages
-            sock.sendto(msg_back.encode(), (UDP_IP, UDP_PORT))
-            sock.sendto(msg_wrist.encode(), (UDP_IP, UDP_PORT))
+            # Send the single combined message
+            sock.sendto(msg.encode(), (UDP_IP, UDP_PORT))
+
 
             # Wait for the next send interval
             time.sleep(send_interval)
