@@ -111,13 +111,16 @@ if __name__ == "__main__":
 
     while True:
         try:
-            # Get data from both IMUs
+            # Collect data from both IMUs
             data_back = imu_back.get_data()
             data_wrist = imu_wrist.get_data()
 
-            # Format and send data for each IMU
-            msg_back = f"back of hand: {data_back.roll:.2f} {data_back.pitch:.2f} {data_back.yaw:.2f}"
-            msg_wrist = f"wrist: {data_wrist.roll:.2f} {data_wrist.pitch:.2f} {data_wrist.yaw:.2f}"
+            # Create a timestamp
+            timestamp = time.time()
+
+            # Format and send synchronized data
+            msg_back = f"{timestamp} back_of_hand: {data_back.roll:.2f} {data_back.pitch:.2f} {data_back.yaw:.2f}"
+            msg_wrist = f"{timestamp} wrist: {data_wrist.roll:.2f} {data_wrist.pitch:.2f} {data_wrist.yaw:.2f}"
 
             # Send messages
             sock.sendto(msg_back.encode(), (UDP_IP, UDP_PORT))
