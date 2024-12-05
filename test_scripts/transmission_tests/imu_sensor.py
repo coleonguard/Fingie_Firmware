@@ -119,8 +119,7 @@ if __name__ == "__main__":
             timestamp = time.time()
 
             # Combine data from both IMUs into a single message
-            msg = (f"{timestamp} back_of_hand: {data_back.roll:.2f} {data_back.pitch:.2f} {data_back.yaw:.2f} | "
-                f"wrist: {data_wrist.roll:.2f} {data_wrist.pitch:.2f} {data_wrist.yaw:.2f}")
+            msg = (f"aaaa")
 
             # Send the single combined message
             sock.sendto(msg.encode(), (UDP_IP, UDP_PORT))
