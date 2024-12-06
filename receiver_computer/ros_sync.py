@@ -7,7 +7,7 @@ import sys
 import os
 
 # Generate the full trial list based on your protocol
-objects = ["prismatic_power", "palmar", "adducted_thumb", "cylindrical_power", "key", "precision_pinch"]
+objects = ["prismatic_power", "palmar_prismatic", "adducted_prismatic", "cylindrical_power", "key_pinch", "precision_pinch"]
 orientations = ["vertical", "horizontal"]
 forces = ["light", "normal", "hard"]
 reps = range(1, 6)  # 1 through 5
