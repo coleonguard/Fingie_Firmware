@@ -16,12 +16,12 @@ ACTIVE_IPS=$(nmap -sn $SUBNET | grep 'Nmap scan report for' | awk '{print $5}')
 # Step 3: Define SSH user
 SSH_USER="admin"
 
-# Step 4: Loop over each IP to copy the SSH key and connect
+# Step 4: Loop over each IP to test SSH connectivity
 for ip in $ACTIVE_IPS; do
     echo "Trying $ip..."
 
     # Check if the IP allows SSH
-    ssh -o ConnectTimeout=3 $SSH_USER@$ip exit
+    ssh -o ConnectTimeout=3 $SSH_USER@$ip exit &>/dev/null
     if [ $? -ne 0 ]; then
         echo "$ip does not accept SSH connections. Skipping."
         continue
