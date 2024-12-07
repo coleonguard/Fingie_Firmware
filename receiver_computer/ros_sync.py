@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import rospy
-from std_msgs.msg import Bool
+from std_msgs_stamped.msg import BoolStamped
 import subprocess
 import signal
 import sys
@@ -43,7 +43,7 @@ def print_in_progress(trial_name):
 def sync_callback(msg):
     global last_sync, trial_in_progress, recording_process, current_trial, retrying_trial, current_trial_index
 
-    current_sync = msg.data
+    current_sync = msg.data  # Extract the data field from BoolStamped
 
     # Rising edge: 0 -> 1
     if current_sync and not last_sync:
@@ -109,8 +109,8 @@ def main():
     current_trial = trial_list[0]
     print_next_trial(current_trial)
 
-    # Subscribe to /sync topic
-    rospy.Subscriber('/sync', Bool, sync_callback)
+    # Subscribe to /sync topic with BoolStamped type
+    rospy.Subscriber('/sync', BoolStamped, sync_callback)
 
     rospy.spin()
 
