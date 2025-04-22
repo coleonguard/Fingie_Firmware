@@ -5,7 +5,7 @@ import time
 # I²C Constants
 # ------------------------------------------------------------------------
 VL6180X_ADDRESS = 0x29   # Default sensor address
-MUX1_ADDRESS = 0x70      # Only using MUX1
+MUX1_ADDRESS = 0x77
 
 MIDDLE2_CHANNEL_ON_MUX1 = 7  # <- Change this if Middle2 is on a different MUX1 channel
 
