@@ -7,7 +7,7 @@ import time
 VL6180X_ADDRESS = 0x29   # Default sensor address
 MUX1_ADDRESS = 0x77
 
-MIDDLE2_CHANNEL_ON_MUX1 = 7  # <- Change this if Middle2 is on a different MUX1 channel
+MIDDLE2_CHANNEL_ON_MUX1 = 3  # <- Change this if Middle2 is on a different MUX1 channel
 
 # ------------------------------------------------------------------------
 # I²C Bus
