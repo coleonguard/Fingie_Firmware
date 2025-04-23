@@ -1,0 +1,158 @@
+{
+  "hand": {
+    "palm_length": 0.09,
+    "palm_width": 0.08,
+    "palm_thickness": 0.03,
+    "wrist_width": 0.06,
+    "wrist_length": 0.03,
+    "is_right_hand": true
+  },
+  "fingers": {
+    "Thumb": {
+      "proximal_length": 0.04,
+      "distal_length": 0.025,
+      "width": 0.018,
+      "base_pos": [
+        -0.02,
+        0.035
+      ],
+      "base_orientation": -40,
+      "mcp_angle": 10,
+      "ip_angle": 10
+    },
+    "Index": {
+      "proximal_length": 0.04,
+      "distal_length": 0.025,
+      "width": 0.016,
+      "base_pos": [
+        0.03,
+        0.03
+      ],
+      "base_orientation": 0,
+      "mcp_angle": 0,
+      "pip_angle": 5
+    },
+    "Middle": {
+      "proximal_length": 0.042,
+      "distal_length": 0.028,
+      "width": 0.016,
+      "base_pos": [
+        0.03,
+        0.01
+      ],
+      "base_orientation": 0,
+      "mcp_angle": 0,
+      "pip_angle": 5
+    },
+    "Ring": {
+      "proximal_length": 0.039,
+      "distal_length": 0.025,
+      "width": 0.015,
+      "base_pos": [
+        0.03,
+        -0.01
+      ],
+      "base_orientation": 0,
+      "mcp_angle": 0,
+      "pip_angle": 5
+    },
+    "Pinky": {
+      "proximal_length": 0.035,
+      "distal_length": 0.02,
+      "width": 0.014,
+      "base_pos": [
+        0.03,
+        -0.03
+      ],
+      "base_orientation": 0,
+      "mcp_angle": 0,
+      "pip_angle": 5
+    }
+  },
+  "sensors": {
+    "prox_sensors": {
+      "Thumb1": {
+        "finger": "Thumb",
+        "segment": "proximal",
+        "position": 0.5,
+        "offset": 0.008
+      },
+      "Thumb2": {
+        "finger": "Thumb",
+        "segment": "distal",
+        "position": 0.5,
+        "offset": 0.008
+      },
+      "Index1": {
+        "finger": "Index",
+        "segment": "proximal",
+        "position": 0.5,
+        "offset": 0.008
+      },
+      "Index2": {
+        "finger": "Index",
+        "segment": "distal",
+        "position": 0.5,
+        "offset": 0.008
+      },
+      "Middle1": {
+        "finger": "Middle",
+        "segment": "proximal",
+        "position": 0.5,
+        "offset": 0.008
+      },
+      "Middle2": {
+        "finger": "Middle",
+        "segment": "distal",
+        "position": 0.5,
+        "offset": 0.008
+      },
+      "Ring1": {
+        "finger": "Ring",
+        "segment": "proximal",
+        "position": 0.5,
+        "offset": 0.008
+      },
+      "Ring2": {
+        "finger": "Ring",
+        "segment": "distal",
+        "position": 0.5,
+        "offset": 0.008
+      },
+      "Pinky1": {
+        "finger": "Pinky",
+        "segment": "proximal",
+        "position": 0.5,
+        "offset": 0.008
+      },
+      "Pinky2": {
+        "finger": "Pinky",
+        "segment": "distal",
+        "position": 0.5,
+        "offset": 0.008
+      }
+    },
+    "imu_sensors": {
+      "back": {
+        "position": [
+          0.0,
+          0.0
+        ],
+        "size": 0.015
+      },
+      "wrist": {
+        "position": [
+          -0.065,
+          0.0
+        ],
+        "size": 0.015
+      }
+    }
+  },
+  "control": {
+    "approach_threshold": 30,
+    "contact_threshold": 5,
+    "max_angle_mcp": 90,
+    "max_angle_pip": 100
+  }
+}
