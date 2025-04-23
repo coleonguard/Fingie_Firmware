@@ -12,7 +12,7 @@ import time
 
 # Default output directory for visualizations
 DEFAULT_VIZ_DIR = os.path.join(os.path.dirname(os.path.dirname(
-               os.path.dirname(os.path.abspath(__file__)))), "visualizations")
+               os.path.dirname(os.path.abspath(__file__)))), "visualizations", "static")
 
 # Default hand parameters - easily adjustable
 DEFAULT_PARAMS = {
@@ -469,8 +469,9 @@ def draw_hand(params=None, output_file=None, ax=None, output_dir=None):
             if 'frame_data' in globals() and sensor_key in frame_data:
                 prox_value = frame_data[sensor_key]
                 # Normalize proximity value for colormapping (approach_threshold to contact_threshold)
-                approach_threshold = params["control"]["approach_threshold"]
-                contact_threshold = params["control"]["contact_threshold"]
+                # Use default values if not in params
+                approach_threshold = control_params.get("approach_threshold", 30)
+                contact_threshold = control_params.get("contact_threshold", 5)
                 
                 if prox_value <= contact_threshold:
                     # Very close proximity/contact - hot (red)
@@ -536,9 +537,13 @@ def draw_hand(params=None, output_file=None, ax=None, output_dir=None):
     from matplotlib.colors import LinearSegmentedColormap, Normalize
     from matplotlib.colorbar import ColorbarBase
     
+    # Get threshold values, using defaults if not in params
+    contact_threshold = control_params.get("contact_threshold", 5)
+    approach_threshold = control_params.get("approach_threshold", 30)
+    
     # Create a special axis for the colorbar
     cmap_ax = fig.add_axes([0.15, 0.95, 0.3, 0.02])
-    norm = Normalize(vmin=params["control"]["contact_threshold"], vmax=params["control"]["approach_threshold"])
+    norm = Normalize(vmin=contact_threshold, vmax=approach_threshold)
     cb = ColorbarBase(cmap_ax, cmap=cm.get_cmap('coolwarm'), norm=norm, orientation='horizontal')
     cb.set_label('Proximity Sensor Distance (mm)')
     plt.text(0.05, 0.92, 'Proximity Sensors:', transform=fig.transFigure)
@@ -548,9 +553,9 @@ def draw_hand(params=None, output_file=None, ax=None, output_dir=None):
     # Add annotations for control parameters
     plt.annotate(
         f"Control Parameters:\n"
-        f"- >{control_params['approach_threshold']}mm: Approach (No movement)\n"
-        f"- {control_params['contact_threshold']}-{control_params['approach_threshold']}mm: Proportional Control\n"
-        f"- <{control_params['contact_threshold']}mm: Contact (Torque Control)",
+        f"- >{approach_threshold}mm: Approach (No movement)\n"
+        f"- {contact_threshold}-{approach_threshold}mm: Proportional Control\n"
+        f"- <{contact_threshold}mm: Contact (Torque Control)",
         xy=(-0.09, -0.07), xytext=(-0.09, -0.07),
         bbox=dict(boxstyle="round,pad=0.5", facecolor='white', alpha=0.8)
     )
@@ -586,7 +591,10 @@ def generate_animation(data_file, output_file="hand_animation.mp4", fps=30, dura
     """
     # Ensure visualization directory exists
     if output_dir is None:
-        output_dir = ensure_vis_dir()
+        # Use animations directory by default
+        output_dir = os.path.join(os.path.dirname(os.path.dirname(
+               os.path.dirname(os.path.abspath(__file__)))), "visualizations", "animations")
+        os.makedirs(output_dir, exist_ok=True)
         
     import pandas as pd
     import json
@@ -831,6 +839,11 @@ if __name__ == "__main__":
     static_parser.add_argument("--output", default="hand_model_detailed.png", help="Output image file")
     static_parser.add_argument("--output-dir", help="Output directory")
     
+    # Create visualization output directory if needed
+    vis_dir = os.path.join(os.path.dirname(os.path.dirname(
+               os.path.dirname(os.path.abspath(__file__)))), "visualizations", "static")
+    os.makedirs(vis_dir, exist_ok=True)
+    
     # Animation command
     anim_parser = subparsers.add_parser("animate", help="Generate hand animation from data")
     anim_parser.add_argument("data_file", help="Path to data file (JSON or CSV)")
@@ -838,6 +851,11 @@ if __name__ == "__main__":
     anim_parser.add_argument("--fps", type=int, default=30, help="Frames per second")
     anim_parser.add_argument("--duration", type=float, help="Duration limit in seconds")
     anim_parser.add_argument("--output-dir", help="Output directory")
+    
+    # Create animations output directory if needed
+    anim_dir = os.path.join(os.path.dirname(os.path.dirname(
+               os.path.dirname(os.path.abspath(__file__)))), "visualizations", "animations")
+    os.makedirs(anim_dir, exist_ok=True)
     
     # Static video command
     video_parser = subparsers.add_parser("video", help="Generate static pose video")

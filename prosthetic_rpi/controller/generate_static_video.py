@@ -15,7 +15,7 @@ from visualize_hand_improved import generate_static_video
 
 # Create visualization output directory
 output_dir = os.path.join(os.path.dirname(os.path.dirname(
-               os.path.dirname(os.path.abspath(__file__)))), "visualizations")
+               os.path.dirname(os.path.abspath(__file__)))), "visualizations", "static")
 os.makedirs(output_dir, exist_ok=True)
 output_file = os.path.join(output_dir, "hand_static_with_proximity.mp4")
 
