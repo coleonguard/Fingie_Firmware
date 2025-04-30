@@ -6,6 +6,9 @@ import numpy as np
 from matplotlib.patches import Rectangle, Circle, Polygon, PathPatch
 from matplotlib.path import Path
 import matplotlib.transforms as transforms
+import matplotlib.cm as cm
+from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.colorbar import ColorbarBase
 import json
 import os
 import time
@@ -448,16 +451,19 @@ def draw_hand(params=None, output_file=None, ax=None, output_dir=None):
             sensor_x = start_pos[0] + (end_pos[0] - start_pos[0]) * pos_fraction
             sensor_y = start_pos[1] + (end_pos[1] - start_pos[1]) * pos_fraction
             
-            # Add offset perpendicular to segment
-            perp_angle = angle + np.pi/2
-            # Get finger width for appropriate vertical positioning
+            # Get finger width for appropriate positioning
             finger_width = finger_params[finger]["width"]
-            # Use finger width for more accurate positioning on finger pulp
-            sensor_x += offset * np.cos(perp_angle)
-            sensor_y += offset * np.sin(perp_angle)
-            # Add fraction of width to center on the pulp instead of just the length centerline
-            sensor_x += 0.3 * finger_width * np.cos(perp_angle) 
-            sensor_y += 0.3 * finger_width * np.sin(perp_angle)
+            
+            # Calculate perpendicular angle toward inner side (palm center)
+            perp_angle = angle - np.pi/2
+            
+            # Use exactly half the finger width as the offset
+            # This positions the sensor exactly halfway between the centerline and the inner edge
+            inner_offset = 0.5 * finger_width
+            
+            # Apply offset to position sensor correctly
+            sensor_x += inner_offset * np.cos(perp_angle)
+            sensor_y += inner_offset * np.sin(perp_angle)
             
             # Draw sensor with heatmap color based on proximity reading
             # Default to no proximity detection (cool blue)
@@ -484,21 +490,26 @@ def draw_hand(params=None, output_file=None, ax=None, output_dir=None):
                     # Create normalized value: 0 (approach) to 1 (contact)
                     normalized = (approach_threshold - prox_value) / (approach_threshold - contact_threshold)
                     # Use matplotlib's colormap
-                    import matplotlib.cm as cm
                     cmap = cm.get_cmap('coolwarm')
                     sensor_color = cmap(normalized)
 
-            # Draw sensor circle with appropriate color
-            sensor_circle = Circle((sensor_x, sensor_y), radius=0.005, 
-                                  facecolor=sensor_color, edgecolor='black', alpha=0.9)
+            # Draw outer sensor circle (outline)
+            sensor_outline = Circle((sensor_x, sensor_y), radius=0.005, 
+                                   facecolor='white', edgecolor='black', alpha=0.9)
+            ax.add_patch(sensor_outline)
+            
+            # Draw inner sensor circle (colored based on proximity)
+            # Inner circle is 75% the diameter of the outer circle
+            sensor_circle = Circle((sensor_x, sensor_y), radius=0.00375, 
+                                  facecolor=sensor_color, edgecolor=None, alpha=0.9)
             ax.add_patch(sensor_circle)
             
             # Add sensor label in small font
             plt.text(sensor_x, sensor_y - 0.005, sensor_name, 
                     fontsize=6, ha='center', va='top')
     
-    # Set plot properties - accommodate the right hand configuration
-    x_min, x_max = -0.1, 0.1
+    # Set plot properties - accommodate the right hand configuration and extend for full finger visibility
+    x_min, x_max = -0.1, 0.12
     
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(-0.1, 0.1)
@@ -533,9 +544,6 @@ def draw_hand(params=None, output_file=None, ax=None, output_dir=None):
     ])
     
     # Add proximity sensor heatmap to legend
-    import matplotlib.cm as cm
-    from matplotlib.colors import LinearSegmentedColormap, Normalize
-    from matplotlib.colorbar import ColorbarBase
     
     # Get threshold values, using defaults if not in params
     contact_threshold = control_params.get("contact_threshold", 5)
