@@ -142,6 +142,17 @@ class AbilityHandInterface(MotorInterface):
                     self.hand.currents = currents.copy()
                 else:
                     self.hand.currents = [currents] * 5 + [-currents]
+            
+            def set_duty(self, duties, reply_mode=None):
+                # Convert duty to current (simplified) and use torque method
+                if isinstance(duties, list):
+                    # Scale duty cycle (-100 to 100) to current (-1 to 1)
+                    scaled_currents = [d/100.0 for d in duties]
+                    self.hand.currents = scaled_currents.copy()
+                else:
+                    # Single value
+                    scaled_current = duties/100.0
+                    self.hand.currents = [scaled_current] * 5 + [-scaled_current]
                     
             def close(self):
                 pass
