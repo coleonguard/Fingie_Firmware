@@ -11,6 +11,31 @@ def main():
     print("Attempting to import AHSerialClient...")
     
     try:
+        # Fix for config.write_log issue
+        import sys
+        import os
+        
+        # Add ability-hand-api path directly
+        ability_hand_path = os.path.expanduser("~/ability-hand-api/python")
+        sys.path.insert(0, ability_hand_path)
+        
+        # Create a minimal config module to prevent errors
+        import importlib.util
+        try:
+            import config as local_config
+            # If we have a local config, save it temporarily
+            sys.modules['local_config'] = local_config
+            # Remove our config from sys.modules to prevent conflicts
+            del sys.modules['config']
+        except ImportError:
+            pass
+            
+        # Create a minimal mock config module for the AHSerialClient
+        import types
+        mock_config = types.ModuleType('config')
+        mock_config.write_log = False
+        sys.modules['config'] = mock_config
+        
         # Try to import from the ability-hand-api
         from ah_wrapper.ah_serial_client import AHSerialClient
         
