@@ -109,8 +109,8 @@ def get_distance():
 #     for mux in {m for _,m,_ in SENSORS}: bus.write_byte(mux,0)
 #     ser.close();  bus.close();  sys.exit(0)
 
-import signal, os
-signal.signal(signal.SIGINT,shutdown); signal.signal(signal.SIGTERM,shutdown)
+# import signal, os
+# signal.signal(signal.SIGINT,shutdown); signal.signal(signal.SIGTERM,shutdown)
 
 ##############################################################################
 #  MAIN LOOP
