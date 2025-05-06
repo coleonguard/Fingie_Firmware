@@ -16,7 +16,7 @@ import smbus2, serial, time, signal, sys, collections
 ##############################################################################
 #  USER CONSTANTS
 ##############################################################################
-SERIAL_PORT   = "/dev/ttyUSB0"   # change if your dongle enumerates elsewhere
+# SERIAL_PORT   = "/dev/ttyUSB0"   # change if your dongle enumerates elsewhere
 SERIAL_BAUD   = 9600            # <= 9600 keeps edge-rate tame
 HAND_COMMAND  = b"POS 50 50 50 50 50\r\n"  # example text command
 SWEEP_HZ      = 5               # how often to read every sensor & send cmd
@@ -26,10 +26,10 @@ N_RETRIES     = 3
 ##############################################################################
 #  BUS SET-UP
 ##############################################################################
-bus = smbus2.SMBus(1)                         # Pi I²C-1
-ser = serial.Serial(SERIAL_PORT,
-                    SERIAL_BAUD,
-                    timeout=0.1)              # non-blocking read
+# bus = smbus2.SMBus(1)                         # Pi I²C-1
+# ser = serial.Serial(SERIAL_PORT,
+#                     SERIAL_BAUD,
+#                     timeout=0.1)              # non-blocking read
 
 VL6180X_ADDR = 0x29
 
@@ -104,10 +104,10 @@ def get_distance():
 
 ##############################################################################
 #  CLEAN EXIT
-##############################################################################
-def shutdown(*_):
-    for mux in {m for _,m,_ in SENSORS}: bus.write_byte(mux,0)
-    ser.close();  bus.close();  sys.exit(0)
+# ##############################################################################
+# def shutdown(*_):
+#     for mux in {m for _,m,_ in SENSORS}: bus.write_byte(mux,0)
+#     ser.close();  bus.close();  sys.exit(0)
 
 import signal, os
 signal.signal(signal.SIGINT,shutdown); signal.signal(signal.SIGTERM,shutdown)
@@ -149,7 +149,7 @@ while True:
 
     print(f"Summary: OK={ok}  SUB={subs}  BAD={bad}\n")
 
-    # send a demo command to the hand at 9600 baud
-    ser.write(HAND_COMMAND)
+    # # send a demo command to the hand at 9600 baud
+    # ser.write(HAND_COMMAND)
 
     time.sleep(1/SWEEP_HZ)
