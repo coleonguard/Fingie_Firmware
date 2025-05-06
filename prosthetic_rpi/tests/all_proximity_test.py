@@ -28,8 +28,8 @@ from collections import OrderedDict
 VL6180X_ADDRESS = 0x29   # Fixed I²C address of all VL6180X sensors
 
 # Multiplexer addresses
-MUX1_ADDRESS = 0x70  # MULT1
-MUX2_ADDRESS = 0x71  # MULT2
+MUX1_ADDRESS = 0x77  # MULT1 address from working middle2_test.py
+MUX2_ADDRESS = 0x77  # MULT2 - using same address temporarily
 
 # I²C bus on Raspberry Pi
 I2C_BUS = 1
@@ -37,18 +37,10 @@ I2C_BUS = 1
 # ------------------------------------------------------------------------
 # Sensor Configuration
 # ------------------------------------------------------------------------
+# For now, only test the known working sensor (Index2 on MUX1, channel 3)
 SENSORS = OrderedDict([
     # Format: (multiplexer_addr, channel, name)
-    ("thumb1",  (MUX1_ADDRESS, 0, "Thumb1")),
-    ("thumb2",  (MUX1_ADDRESS, 1, "Thumb2")),
-    ("index1",  (MUX1_ADDRESS, 2, "Index1")),
     ("index2",  (MUX1_ADDRESS, 3, "Index2")),
-    ("middle1", (MUX1_ADDRESS, 4, "Middle1")),
-    ("middle2", (MUX2_ADDRESS, 0, "Middle2")),
-    ("ring1",   (MUX2_ADDRESS, 1, "Ring1")),
-    ("ring2",   (MUX2_ADDRESS, 2, "Ring2")),
-    ("pinky1",  (MUX2_ADDRESS, 3, "Pinky1")),
-    ("pinky2",  (MUX2_ADDRESS, 4, "Pinky2")),
 ])
 
 # ------------------------------------------------------------------------

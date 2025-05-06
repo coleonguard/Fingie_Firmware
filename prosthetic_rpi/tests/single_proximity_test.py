@@ -1,11 +1,11 @@
 # Channel Mapping:
-# MULT1 (I²C Address = 0x70)
+# MULT1 (I²C Address = 0x77)
 #   Channel 0 → Thumb1 (SDA-Thumb1, SCL-Thumb1)
 #   Channel 1 → Thumb2 (SDA-Thumb2, SCL-Thumb2)
 #   Channel 2 → Index1 (SDA-Index1, SCL-Index1)
 #   Channel 3 → Index2 (SDA-Index2, SCL-Index2)
 #   Channel 4 → Middle1 (SDA-Middle, SCL-Middle)
-# MULT2 (I²C Address = 0x71)
+# MULT2 (I²C Address = 0x73)
 #   Channel 0 → Middle2 (SDA-Middle2, SCL-Middle2)
 #   Channel 1 → Ring1 (SDA-Ring1, SCL-Ring1)
 #   Channel 2 → Ring2 (SDA-Ring2, SCL-Ring2)
