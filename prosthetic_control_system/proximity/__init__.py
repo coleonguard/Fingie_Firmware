@@ -1,0 +1,1 @@
+# Proximity sensor management package
