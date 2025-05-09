@@ -75,19 +75,24 @@ Usage: python -m hardware_tools.test_i2c_mux [options]
 
 Options:
   --bus INT              I2C bus number (default: 1)
-  --address HEX          I2C address of multiplexer (default: 0x70)
+  --address HEX          I2C address of multiplexer (default: 0x73)
   --scan                 Scan all channels for devices
   --channel INT          Select specific channel (0-7)
+  --check-both           Check both multiplexers on addresses 0x73 and 0x77
+  --check-mux            Same as --check-both (legacy option)
   --verbose              Verbose output
 ```
 
 Example:
 ```
-# Scan all channels for connected devices
+# Scan all channels on default multiplexer (0x73)
 python -m hardware_tools.test_i2c_mux --scan
 
-# Test specific channel
-python -m hardware_tools.test_i2c_mux --channel 0
+# Check both multiplexers at 0x73 and 0x77
+python -m hardware_tools.test_i2c_mux --check-both
+
+# Test specific channel on a specific multiplexer
+python -m hardware_tools.test_i2c_mux --address 0x77 --channel 0
 ```
 
 ### test_vl6180x.py
@@ -100,20 +105,25 @@ Usage: python -m hardware_tools.test_vl6180x [options]
 Options:
   --bus INT              I2C bus number (default: 1)
   --address HEX          I2C address of sensor (default: 0x29)
-  --mux-address HEX      I2C address of multiplexer (default: 0x70)
+  --mux-address HEX      I2C address of multiplexer (default: None)
   --channel INT          Multiplexer channel (0-7)
   --continuous           Continuous reading mode
   --samples INT          Number of samples to take (default: 10)
   --interval FLOAT       Sampling interval in seconds (default: 0.1)
+  --scan-all             Scan both multiplexers (0x73 and 0x77) for all VL6180X sensors and read from them
+  --plot                 Plot histogram of readings (requires matplotlib)
 ```
 
 Example:
 ```
-# Test sensor on channel 0 of multiplexer
-python -m hardware_tools.test_vl6180x --channel 0
+# Test sensor on channel 0 of multiplexer 0x73
+python -m hardware_tools.test_vl6180x --mux-address 0x73 --channel 0
 
 # Continuous reading mode
-python -m hardware_tools.test_vl6180x --channel 0 --continuous
+python -m hardware_tools.test_vl6180x --mux-address 0x73 --channel 0 --continuous
+
+# Scan and monitor all VL6180X sensors on both multiplexers
+python -m hardware_tools.test_vl6180x --scan-all
 ```
 
 ### test_imu.py

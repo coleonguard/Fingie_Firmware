@@ -350,6 +350,64 @@ class VL6180XTester:
             logger.debug(f"Closed I2C bus {self.bus_num}")
             self.bus = None
 
+def find_vl6180x_sensors(bus_num=1, verbose=False):
+    """
+    Find all VL6180X sensors connected to multiplexers at 0x73 and 0x77.
+    
+    Args:
+        bus_num: I2C bus number (default: 1)
+        verbose: Enable verbose output
+        
+    Returns:
+        List of (mux_address, channel) tuples for found sensors
+    """
+    # Based on I2C scan results for 0x73 and 0x77 multiplexers
+    found_sensors = []
+    
+    try:
+        bus = smbus.SMBus(bus_num)
+        
+        # Scan both multiplexers (0x73 and 0x77)
+        mux_addresses = [0x73, 0x77]
+        for mux_addr in mux_addresses:
+            try:
+                # Check if multiplexer exists
+                bus.read_byte(mux_addr)
+                logger.info(f"Found multiplexer at address 0x{mux_addr:02x}")
+                
+                # Scan all channels
+                for channel in range(8):
+                    # Enable channel on the multiplexer
+                    try:
+                        channel_byte = 1 << channel
+                        bus.write_byte(mux_addr, channel_byte)
+                        time.sleep(0.01)  # Give it time to switch
+                        
+                        # Check if a VL6180X sensor is on this channel
+                        try:
+                            sensor_addr = 0x29  # VL6180X default address
+                            model_id = bus.read_byte_data(sensor_addr, 0x00)
+                            
+                            if model_id == 0xB4:  # VL6180X model ID
+                                logger.info(f"Found VL6180X on multiplexer 0x{mux_addr:02x}, channel {channel}")
+                                found_sensors.append((mux_addr, channel))
+                            else:
+                                if verbose:
+                                    logger.debug(f"Device at 0x{sensor_addr:02x} on mux 0x{mux_addr:02x} channel {channel} is not a VL6180X (ID: 0x{model_id:02x})")
+                        except IOError:
+                            if verbose:
+                                logger.debug(f"No VL6180X sensor on mux 0x{mux_addr:02x} channel {channel}")
+                    except IOError as e:
+                        logger.warning(f"Failed to select channel {channel} on mux 0x{mux_addr:02x}: {e}")
+            except IOError:
+                logger.warning(f"No multiplexer found at address 0x{mux_addr:02x}")
+        
+        bus.close()
+    except (IOError, FileNotFoundError) as e:
+        logger.error(f"Failed to open I2C bus {bus_num}: {e}")
+    
+    return found_sensors
+
 def main():
     """Main function"""
     # Parse command-line arguments
@@ -369,6 +427,8 @@ def main():
                       help="Sampling interval in seconds (default: 0.1)")
     parser.add_argument("--plot", action="store_true",
                       help="Plot histogram of readings (requires matplotlib)")
+    parser.add_argument("--scan-all", action="store_true",
+                      help="Scan both multiplexers for all VL6180X sensors and read from them")
     parser.add_argument("--verbose", action="store_true",
                       help="Verbose output")
     
@@ -377,66 +437,136 @@ def main():
     # Register signal handler for clean shutdown
     def signal_handler(sig, frame):
         logger.info("Interrupted by user")
-        if 'tester' in locals() and tester is not None:
+        if 'testers' in locals():
+            for tester in testers:
+                if tester is not None:
+                    tester.close()
+        elif 'tester' in locals() and tester is not None:
             tester.close()
         sys.exit(0)
         
     signal.signal(signal.SIGINT, signal_handler)
     
-    # Create tester
-    try:
-        tester = VL6180XTester(
-            args.bus, args.address, args.mux_address, args.channel, args.verbose
-        )
+    if args.scan_all:
+        # Find all VL6180X sensors
+        logger.info("Scanning for VL6180X sensors on both multiplexers...")
+        sensors = find_vl6180x_sensors(args.bus, args.verbose)
         
-        if not tester.initialize():
-            logger.error("Failed to initialize sensor")
+        if not sensors:
+            logger.error("No VL6180X sensors found")
             return 1
             
-        if args.continuous:
-            # Continuous reading mode
-            tester.start_continuous_reading(interval=args.interval)
-            
-            try:
-                # Wait for user to interrupt
-                while tester.running:
-                    time.sleep(0.1)
-            except KeyboardInterrupt:
-                logger.info("Interrupted by user")
-                
-            tester.stop_continuous_reading()
-            
-        else:
-            # Single reading mode
-            logger.info(f"Taking {args.samples} samples...")
-            
-            for i in range(args.samples):
-                distance = tester.read_distance()
-                
-                if distance is not None:
-                    logger.info(f"Sample {i+1}/{args.samples}: Distance = {distance} mm")
-                else:
-                    logger.warning(f"Sample {i+1}/{args.samples}: Failed to read distance")
-                    
-                if i < args.samples - 1:
-                    time.sleep(args.interval)
-            
-            # Print statistics
-            tester._print_statistics()
-            
-        # Plot histogram if requested
-        if args.plot and MATPLOTLIB_AVAILABLE:
-            tester.plot_histogram()
-            
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        if 'tester' in locals() and tester is not None:
-            tester.close()
-        return 1
+        logger.info(f"Found {len(sensors)} VL6180X sensors")
         
-    finally:
-        if 'tester' in locals() and tester is not None:
-            tester.close()
+        # Create a tester for each sensor
+        testers = []
+        for mux_addr, channel in sensors:
+            try:
+                tester = VL6180XTester(
+                    args.bus, args.address, mux_addr, channel, args.verbose
+                )
+                
+                if tester.initialize():
+                    testers.append(tester)
+                    logger.info(f"Initialized sensor on mux 0x{mux_addr:02x}, channel {channel}")
+                else:
+                    logger.warning(f"Failed to initialize sensor on mux 0x{mux_addr:02x}, channel {channel}")
+                    tester.close()
+            except Exception as e:
+                logger.error(f"Error creating tester for mux 0x{mux_addr:02x}, channel {channel}: {e}")
+        
+        if not testers:
+            logger.error("Failed to initialize any sensors")
+            return 1
+            
+        logger.info(f"Successfully initialized {len(testers)} sensors")
+        
+        try:
+            # Continuous reading from all sensors
+            logger.info("Starting continuous reading from all sensors. Press Ctrl+C to stop.")
+            
+            readings_count = 0
+            while True:
+                readings_count += 1
+                for i, tester in enumerate(testers):
+                    mux_addr, channel = sensors[i]
+                    distance = tester.read_distance()
+                    
+                    if distance is not None:
+                        logger.info(f"Mux 0x{mux_addr:02x}, Channel {channel}: Distance = {distance} mm")
+                    else:
+                        logger.warning(f"Mux 0x{mux_addr:02x}, Channel {channel}: Failed to read distance")
+                
+                # Print statistics periodically
+                if readings_count % 10 == 0:
+                    logger.info("\n=== Sensor Statistics ===")
+                    for i, tester in enumerate(testers):
+                        mux_addr, channel = sensors[i]
+                        logger.info(f"Mux 0x{mux_addr:02x}, Channel {channel}:")
+                        tester._print_statistics()
+                
+                time.sleep(args.interval)
+                
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user")
+        finally:
+            for tester in testers:
+                tester.close()
+    else:
+        # Original single sensor mode
+        try:
+            tester = VL6180XTester(
+                args.bus, args.address, args.mux_address, args.channel, args.verbose
+            )
+            
+            if not tester.initialize():
+                logger.error("Failed to initialize sensor")
+                return 1
+                
+            if args.continuous:
+                # Continuous reading mode
+                tester.start_continuous_reading(interval=args.interval)
+                
+                try:
+                    # Wait for user to interrupt
+                    while tester.running:
+                        time.sleep(0.1)
+                except KeyboardInterrupt:
+                    logger.info("Interrupted by user")
+                    
+                tester.stop_continuous_reading()
+                
+            else:
+                # Single reading mode
+                logger.info(f"Taking {args.samples} samples...")
+                
+                for i in range(args.samples):
+                    distance = tester.read_distance()
+                    
+                    if distance is not None:
+                        logger.info(f"Sample {i+1}/{args.samples}: Distance = {distance} mm")
+                    else:
+                        logger.warning(f"Sample {i+1}/{args.samples}: Failed to read distance")
+                        
+                    if i < args.samples - 1:
+                        time.sleep(args.interval)
+                
+                # Print statistics
+                tester._print_statistics()
+                
+            # Plot histogram if requested
+            if args.plot and MATPLOTLIB_AVAILABLE:
+                tester.plot_histogram()
+                
+        except Exception as e:
+            logger.error(f"Error: {e}")
+            if 'tester' in locals() and tester is not None:
+                tester.close()
+            return 1
+            
+        finally:
+            if 'tester' in locals() and tester is not None:
+                tester.close()
     
     return 0
 
