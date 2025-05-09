@@ -50,6 +50,10 @@ class VL6180XTester:
     RESULT_RANGE_STATUS = 0x04d
     RESULT_INTERRUPT_STATUS_GPIO = 0x04f
     
+    # Constants for reading
+    MAX_READY_MS = 20      # Max time to wait for range-ready in milliseconds
+    N_RETRIES = 3          # Number of retries before giving up
+    
     def __init__(
         self, 
         bus_num: int = 1, 
@@ -350,6 +354,79 @@ class VL6180XTester:
             logger.debug(f"Closed I2C bus {self.bus_num}")
             self.bus = None
 
+def mux_select(bus, addr, ch):
+    """
+    Select a channel on a multiplexer.
+    
+    Args:
+        bus: SMBus instance
+        addr: Multiplexer address
+        ch: Channel number (0-7)
+    """
+    bus.write_byte(addr, 1 << ch)
+    time.sleep(0.0005)  # Short delay to settle
+
+def vl_wb(bus, reg, val, addr=0x29):
+    """
+    Write a byte to a VL6180X register.
+    
+    Args:
+        bus: SMBus instance
+        reg: Register address (16-bit)
+        val: Value to write
+        addr: VL6180X address (default: 0x29)
+    """
+    hi, lo = reg >> 8 & 0xFF, reg & 0xFF
+    bus.write_i2c_block_data(addr, hi, [lo, val])
+
+def vl_rb(bus, reg, addr=0x29):
+    """
+    Read a byte from a VL6180X register.
+    
+    Args:
+        bus: SMBus instance
+        reg: Register address (16-bit)
+        addr: VL6180X address (default: 0x29)
+    
+    Returns:
+        Byte value
+    """
+    hi, lo = reg >> 8 & 0xFF, reg & 0xFF
+    bus.write_i2c_block_data(addr, hi, [lo])
+    time.sleep(0.0003)  # Short delay
+    return bus.read_byte(addr)
+
+def vl_init(bus, addr=0x29):
+    """
+    Initialize a VL6180X sensor.
+    
+    Args:
+        bus: SMBus instance
+        addr: VL6180X address (default: 0x29)
+        
+    Returns:
+        True if initialization was needed, False if already initialized
+    """
+    if vl_rb(bus, 0x016, addr) != 1:   # Check "fresh-out-of-reset" bit
+        return False
+    
+    # These are the recommended initialization settings from the datasheet
+    for r, v in [
+        (0x0207, 1), (0x0208, 1), (0x0096, 0), (0x0097, 0xfd),
+        (0x00e3, 0), (0x00e4, 4), (0x00e5, 2), (0x00e6, 1), (0x00e7, 3),
+        (0x00f5, 2), (0x00d9, 5), (0x00db, 0xce), (0x00dc, 3), (0x00dd, 0xf8),
+        (0x009f, 0), (0x00a3, 0x3c), (0x00b7, 0), (0x00bb, 0x3c), (0x00b2, 9),
+        (0x00ca, 9), (0x0198, 1), (0x01b0, 0x17), (0x01ad, 0), (0x00ff, 5),
+        (0x0100, 5), (0x0199, 5), (0x01a6, 0x1b), (0x01ac, 0x3e), (0x01a7, 0x1f),
+        (0x0030, 0), (0x0011, 0x10), (0x010a, 0x30), (0x003f, 0x46), (0x0031, 0xFF),
+        (0x0041, 0x63), (0x002e, 1), (0x001b, 9), (0x003e, 0x31), (0x0014, 0x24)
+    ]:
+        vl_wb(bus, r, v, addr)
+    
+    # Clear the fresh-out-of-reset bit
+    vl_wb(bus, 0x016, 0, addr)
+    return True
+
 def find_vl6180x_sensors(bus_num=1, verbose=False):
     """
     Find all VL6180X sensors connected to multiplexers at 0x73 and 0x77.
@@ -359,48 +436,54 @@ def find_vl6180x_sensors(bus_num=1, verbose=False):
         verbose: Enable verbose output
         
     Returns:
-        List of (mux_address, channel) tuples for found sensors
+        List of (name, mux_address, channel) tuples for found sensors
     """
-    # Based on I2C scan results for 0x73 and 0x77 multiplexers
+    # Use the known sensor locations from fallback_test.py
+    SENSORS = [  # (name, mux-addr, channel)
+        ("Thumb1",  0x77, 0), ("Thumb2",  0x77, 1),
+        ("Index1",  0x77, 2), ("Index2",  0x77, 3),
+        ("Middle1", 0x77, 4), ("Middle2", 0x73, 0),
+        ("Ring1",   0x73, 1), ("Ring2",   0x73, 2),
+        ("Pinky1",  0x73, 3), ("Pinky2",  0x73, 4),
+    ]
+    
     found_sensors = []
     
     try:
         bus = smbus.SMBus(bus_num)
         
-        # Scan both multiplexers (0x73 and 0x77)
-        mux_addresses = [0x73, 0x77]
+        # Check each multiplexer
+        mux_addresses = {0x73, 0x77}
         for mux_addr in mux_addresses:
             try:
                 # Check if multiplexer exists
                 bus.read_byte(mux_addr)
                 logger.info(f"Found multiplexer at address 0x{mux_addr:02x}")
-                
-                # Scan all channels
-                for channel in range(8):
-                    # Enable channel on the multiplexer
-                    try:
-                        channel_byte = 1 << channel
-                        bus.write_byte(mux_addr, channel_byte)
-                        time.sleep(0.01)  # Give it time to switch
-                        
-                        # Check if a VL6180X sensor is on this channel
-                        try:
-                            sensor_addr = 0x29  # VL6180X default address
-                            model_id = bus.read_byte_data(sensor_addr, 0x00)
-                            
-                            if model_id == 0xB4:  # VL6180X model ID
-                                logger.info(f"Found VL6180X on multiplexer 0x{mux_addr:02x}, channel {channel}")
-                                found_sensors.append((mux_addr, channel))
-                            else:
-                                if verbose:
-                                    logger.debug(f"Device at 0x{sensor_addr:02x} on mux 0x{mux_addr:02x} channel {channel} is not a VL6180X (ID: 0x{model_id:02x})")
-                        except IOError:
-                            if verbose:
-                                logger.debug(f"No VL6180X sensor on mux 0x{mux_addr:02x} channel {channel}")
-                    except IOError as e:
-                        logger.warning(f"Failed to select channel {channel} on mux 0x{mux_addr:02x}: {e}")
             except IOError:
                 logger.warning(f"No multiplexer found at address 0x{mux_addr:02x}")
+                
+        # Try to access each known sensor
+        for name, mux_addr, channel in SENSORS:
+            try:
+                # Select channel on the multiplexer
+                mux_select(bus, mux_addr, channel)
+                
+                # Try a simple read operation from the sensor
+                try:
+                    # Check the model ID register
+                    model_id = vl_rb(bus, 0x00)
+                    if model_id == 0xB4:  # VL6180X model ID
+                        logger.info(f"Found VL6180X '{name}' on multiplexer 0x{mux_addr:02x}, channel {channel}")
+                        found_sensors.append((name, mux_addr, channel))
+                    else:
+                        if verbose:
+                            logger.debug(f"Device at 0x29 on mux 0x{mux_addr:02x} channel {channel} is not a VL6180X (ID: 0x{model_id:02x})")
+                except IOError as e:
+                    if verbose:
+                        logger.debug(f"Error reading from VL6180X '{name}' on mux 0x{mux_addr:02x} channel {channel}: {e}")
+            except IOError as e:
+                if verbose:
+                    logger.debug(f"Error selecting channel {channel} on mux 0x{mux_addr:02x}: {e}")
         
         bus.close()
     except (IOError, FileNotFoundError) as e:
@@ -438,7 +521,7 @@ def main():
     def signal_handler(sig, frame):
         logger.info("Interrupted by user")
         if 'testers' in locals():
-            for tester in testers:
+            for _, tester in testers:
                 if tester is not None:
                     tester.close()
         elif 'tester' in locals() and tester is not None:
@@ -460,20 +543,20 @@ def main():
         
         # Create a tester for each sensor
         testers = []
-        for mux_addr, channel in sensors:
+        for name, mux_addr, channel in sensors:
             try:
                 tester = VL6180XTester(
                     args.bus, args.address, mux_addr, channel, args.verbose
                 )
                 
                 if tester.initialize():
-                    testers.append(tester)
-                    logger.info(f"Initialized sensor on mux 0x{mux_addr:02x}, channel {channel}")
+                    testers.append((name, tester))
+                    logger.info(f"Initialized sensor '{name}' on mux 0x{mux_addr:02x}, channel {channel}")
                 else:
-                    logger.warning(f"Failed to initialize sensor on mux 0x{mux_addr:02x}, channel {channel}")
+                    logger.warning(f"Failed to initialize sensor '{name}' on mux 0x{mux_addr:02x}, channel {channel}")
                     tester.close()
             except Exception as e:
-                logger.error(f"Error creating tester for mux 0x{mux_addr:02x}, channel {channel}: {e}")
+                logger.error(f"Error creating tester for '{name}' on mux 0x{mux_addr:02x}, channel {channel}: {e}")
         
         if not testers:
             logger.error("Failed to initialize any sensors")
@@ -482,35 +565,78 @@ def main():
         logger.info(f"Successfully initialized {len(testers)} sensors")
         
         try:
+            # Initialize sensor read counts for statistics
+            readings = {}
+            for name, _ in testers:
+                readings[name] = {
+                    "count": 0,
+                    "min": 255,
+                    "max": 0,
+                    "sum": 0,
+                    "invalid": 0,
+                    "values": []
+                }
+            
             # Continuous reading from all sensors
             logger.info("Starting continuous reading from all sensors. Press Ctrl+C to stop.")
             
-            readings_count = 0
+            reading_count = 0
             while True:
-                readings_count += 1
-                for i, tester in enumerate(testers):
-                    mux_addr, channel = sensors[i]
+                reading_count += 1
+                
+                # Get new readings
+                raw = {}
+                for name, tester in testers:
                     distance = tester.read_distance()
+                    raw[name] = distance
                     
                     if distance is not None:
-                        logger.info(f"Mux 0x{mux_addr:02x}, Channel {channel}: Distance = {distance} mm")
+                        # Update statistics
+                        readings[name]["count"] += 1
+                        readings[name]["min"] = min(readings[name]["min"], distance)
+                        readings[name]["max"] = max(readings[name]["max"], distance)
+                        readings[name]["sum"] += distance
+                        readings[name]["values"].append(distance)
+                        if len(readings[name]["values"]) > 100:
+                            readings[name]["values"] = readings[name]["values"][-100:]  # Keep last 100
                     else:
-                        logger.warning(f"Mux 0x{mux_addr:02x}, Channel {channel}: Failed to read distance")
+                        readings[name]["invalid"] += 1
+                
+                # Print current values in a clean format
+                if reading_count % 1 == 0:  # Every reading
+                    print("\n--- Current Distance Readings ---")
+                    for name, _ in testers:
+                        if raw[name] is None:
+                            print(f"{name:<8} N/A")
+                        else:
+                            print(f"{name:<8} {raw[name]:3d} mm")
                 
                 # Print statistics periodically
-                if readings_count % 10 == 0:
-                    logger.info("\n=== Sensor Statistics ===")
-                    for i, tester in enumerate(testers):
-                        mux_addr, channel = sensors[i]
-                        logger.info(f"Mux 0x{mux_addr:02x}, Channel {channel}:")
-                        tester._print_statistics()
+                if reading_count % 20 == 0:  # Every 20 readings
+                    print("\n=== Sensor Statistics ===")
+                    for name, _ in testers:
+                        stats = readings[name]
+                        print(f"{name} Statistics:")
+                        print(f"  Count: {stats['count']}")
+                        print(f"  Invalid: {stats['invalid']}")
+                        
+                        if stats['count'] > 0:
+                            avg = stats['sum'] / stats['count']
+                            print(f"  Min: {stats['min']} mm")
+                            print(f"  Max: {stats['max']} mm")
+                            print(f"  Avg: {avg:.1f} mm")
+                            
+                            if len(stats['values']) >= 2:
+                                std_dev = np.std(stats['values'])
+                                print(f"  Std Dev: {std_dev:.1f} mm")
+                        print("")
                 
                 time.sleep(args.interval)
                 
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
         finally:
-            for tester in testers:
+            for _, tester in testers:
                 tester.close()
     else:
         # Original single sensor mode
