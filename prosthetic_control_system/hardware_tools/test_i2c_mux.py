@@ -252,6 +252,7 @@ def main():
                       help="I2C address of multiplexer (default: 0x70)")
     parser.add_argument("--scan", action="store_true", help="Scan all channels for devices")
     parser.add_argument("--channel", type=int, help="Select specific channel (0-7)")
+    parser.add_argument("--check-mux", action="store_true", help="Check multiplexers on addresses 0x73 and 0x77")
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
     
     args = parser.parse_args()
@@ -260,7 +261,23 @@ def main():
     try:
         tester = I2CMuxTester(args.bus, args.address, args.verbose)
         
-        if args.scan:
+        if args.check_mux:
+            # Check multiplexers at 0x73 and 0x77
+            logger.info("Checking multiplexers at addresses 0x73 and 0x77...")
+            mux_addresses = [0x73, 0x77]
+            for mux_addr in mux_addresses:
+                try:
+                    mux_tester = I2CMuxTester(args.bus, mux_addr, args.verbose)
+                    logger.info(f"Found multiplexer at address 0x{mux_addr:02x}")
+                    # Scan all channels on this multiplexer
+                    results = mux_tester.scan_all_channels()
+                    total_devices = sum(len(devices) for devices in results.values())
+                    logger.info(f"Scan complete. Found {total_devices} device(s) across all channels on mux 0x{mux_addr:02x}.")
+                    mux_tester.close()
+                except Exception as e:
+                    logger.warning(f"No multiplexer found at address 0x{mux_addr:02x}: {e}")
+            
+        elif args.scan:
             # Scan all channels
             results = tester.scan_all_channels()
             
@@ -275,7 +292,7 @@ def main():
         else:
             # No specific action, just check if multiplexer is present
             logger.info(f"Multiplexer found at address 0x{args.address:02x}")
-            logger.info("Use --scan to scan all channels or --channel to test a specific channel")
+            logger.info("Use --scan to scan all channels, --channel to test a specific channel, or --check-mux to check multiplexers at 0x73 and 0x77")
             
     except (IOError, FileNotFoundError) as e:
         logger.error(f"Error: {e}")
