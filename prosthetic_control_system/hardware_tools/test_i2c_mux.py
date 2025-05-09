@@ -248,36 +248,63 @@ def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="I2C Multiplexer Tester")
     parser.add_argument("--bus", type=int, default=1, help="I2C bus number (default: 1)")
-    parser.add_argument("--address", type=lambda x: int(x, 0), default=0x70, 
-                      help="I2C address of multiplexer (default: 0x70)")
+    parser.add_argument("--address", type=lambda x: int(x, 0), default=0x73, 
+                      help="I2C address of multiplexer (default: 0x73)")
     parser.add_argument("--scan", action="store_true", help="Scan all channels for devices")
     parser.add_argument("--channel", type=int, help="Select specific channel (0-7)")
-    parser.add_argument("--check-mux", action="store_true", help="Check multiplexers on addresses 0x73 and 0x77")
+    parser.add_argument("--check-both", action="store_true", help="Check both multiplexers on addresses 0x73 and 0x77")
+    parser.add_argument("--check-mux", action="store_true", 
+                      help="Legacy option, same as --check-both")
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
     
     args = parser.parse_args()
     
-    # Create tester
-    try:
-        tester = I2CMuxTester(args.bus, args.address, args.verbose)
+    # For backward compatibility
+    if args.check_mux:
+        args.check_both = True
+    
+    # Check for specific multiplexers without crashing if they're not found
+    if args.check_both:
+        logger.info("Checking multiplexers at addresses 0x73 and 0x77...")
+        bus = None
         
-        if args.check_mux:
-            # Check multiplexers at 0x73 and 0x77
-            logger.info("Checking multiplexers at addresses 0x73 and 0x77...")
-            mux_addresses = [0x73, 0x77]
-            for mux_addr in mux_addresses:
+        try:
+            bus = smbus.SMBus(args.bus)
+        except (IOError, FileNotFoundError) as e:
+            logger.error(f"Failed to open I2C bus {args.bus}: {e}")
+            return 1
+            
+        mux_addresses = [0x73, 0x77]
+        for mux_addr in mux_addresses:
+            logger.info(f"Trying multiplexer at address 0x{mux_addr:02x}...")
+            try:
+                # Just check if device exists
+                bus.read_byte(mux_addr)
+                logger.info(f"Found multiplexer at address 0x{mux_addr:02x}")
+                
+                # Now scan channels
                 try:
+                    # Create a new tester for this mux
                     mux_tester = I2CMuxTester(args.bus, mux_addr, args.verbose)
-                    logger.info(f"Found multiplexer at address 0x{mux_addr:02x}")
                     # Scan all channels on this multiplexer
                     results = mux_tester.scan_all_channels()
                     total_devices = sum(len(devices) for devices in results.values())
                     logger.info(f"Scan complete. Found {total_devices} device(s) across all channels on mux 0x{mux_addr:02x}.")
                     mux_tester.close()
                 except Exception as e:
-                    logger.warning(f"No multiplexer found at address 0x{mux_addr:02x}: {e}")
-            
-        elif args.scan:
+                    logger.error(f"Error scanning multiplexer at 0x{mux_addr:02x}: {e}")
+            except IOError:
+                logger.warning(f"No multiplexer found at address 0x{mux_addr:02x}")
+                
+        if bus:
+            bus.close()
+        return 0
+    
+    # For other operations, create a tester as before
+    try:
+        tester = I2CMuxTester(args.bus, args.address, args.verbose)
+        
+        if args.scan:
             # Scan all channels
             results = tester.scan_all_channels()
             
@@ -290,9 +317,12 @@ def main():
             if not tester.test_channel(args.channel):
                 logger.warning(f"No devices found on channel {args.channel}")
         else:
-            # No specific action, just check if multiplexer is present
-            logger.info(f"Multiplexer found at address 0x{args.address:02x}")
-            logger.info("Use --scan to scan all channels, --channel to test a specific channel, or --check-mux to check multiplexers at 0x73 and 0x77")
+            # No specific action, just scan the current multiplexer
+            logger.info(f"Scanning multiplexer at address 0x{args.address:02x}")
+            results = tester.scan_all_channels()
+            total_devices = sum(len(devices) for devices in results.values())
+            logger.info(f"Scan complete. Found {total_devices} device(s) across all channels.")
+            logger.info("Use --check-both to check both multiplexers at 0x73 and 0x77")
             
     except (IOError, FileNotFoundError) as e:
         logger.error(f"Error: {e}")
