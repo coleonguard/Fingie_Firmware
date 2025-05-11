@@ -88,14 +88,27 @@ Follow these steps to systematically test the system:
 3. Run the proximity-only controller in simulation mode
 4. Run with actual hardware gradually adding components
 
-## Fault Handling
+## Safety Features and Fault Handling
 
-The controller monitors for these fault conditions:
-- Loop overrun: Control loop takes longer than the specified interval
-- Communication loss: Problems with the motor interface
-- Sensor failure: Multiple critical proximity sensors failing
+The controller includes several safety features to protect the Ability Hand:
 
-When faults occur, they are logged and displayed in the status output.
+1. **Safe Default Position**: The hand always defaults to the open/flat position when:
+   - The controller is stopped
+   - Errors occur in sensor readings
+   - System shutdown is triggered
+
+2. **Safety Reset Command**: Press 'r' during operation to immediately open the hand to a safe position
+
+3. **Error Handling**: Extensive error handling ensures that even if components fail, the hand tries to reach a safe position
+
+4. **Fault Detection**: The controller monitors for these fault conditions:
+   - Loop overrun: Control loop takes longer than the specified interval
+   - Communication loss: Problems with the motor interface
+   - Sensor failure: Multiple critical proximity sensors failing
+
+5. **Sensor Substitution**: If a proximity sensor fails, the system tries to substitute readings from neighboring sensors as defined in the fallback map
+
+When faults occur, they are logged and displayed in the status output. The controller will try to maintain operation with degraded performance rather than failing completely.
 
 ## Performance Tuning
 

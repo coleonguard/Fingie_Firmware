@@ -27,11 +27,25 @@ DEFAULT_CONFIG = {
     "auto_release_timeout": 5.0,  # seconds
 }
 
-# Default multiplexer addresses
+# Default multiplexer addresses - MAKE SURE THESE MATCH YOUR HARDWARE
 MUX_ADDRESSES = {
-    "mux1": 0x77,  # For fingers: Thumb1, Thumb2, Index1, Index2, Middle1
-    "mux2": 0x73,  # For fingers: Middle2, Ring1, Ring2, Pinky1, Pinky2
+    "mux1": 0x77,  # First multiplexer (address 0x77) - Thumb1, Thumb2, Index1, Index2, Middle1
+    "mux2": 0x73,  # Second multiplexer (address 0x73) - Middle2, Ring1, Ring2, Pinky1, Pinky2
 }
+
+# Default sensor configuration matching multiplexer addresses
+DEFAULT_SENSORS = [
+    (0x77, 0, "Thumb1"),
+    (0x77, 1, "Thumb2"),
+    (0x77, 2, "Index1"),
+    (0x77, 3, "Index2"),
+    (0x77, 4, "Middle1"),
+    (0x73, 0, "Middle2"),
+    (0x73, 1, "Ring1"),
+    (0x73, 2, "Ring2"),
+    (0x73, 3, "Pinky1"),
+    (0x73, 4, "Pinky2"),
+]
 
 # Sensor-to-Motor mapping
 FINGER_MAPPING = {

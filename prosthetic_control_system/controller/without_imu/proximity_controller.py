@@ -95,13 +95,31 @@ class ProximityController:
         else:
             self.proximity_sampling_rate = proximity_sampling_rate
         
-        # Initialize proximity manager with custom thresholds
+        # Initialize proximity manager with custom thresholds and correct sensor config
         logger.info("Initializing proximity manager...")
-        self.proximity = ProximityManager(
-            sampling_rate=self.proximity_sampling_rate,
-            approach_threshold=self.approach_threshold,
-            contact_threshold=self.contact_threshold
-        )
+        try:
+            # Import sensors from config
+            from prosthetic_control_system.controller.without_imu.config import DEFAULT_SENSORS
+            
+            # Create instance with explicit sensor configuration
+            self.proximity = ProximityManager(
+                sampling_rate=self.proximity_sampling_rate,
+                approach_threshold=self.approach_threshold,
+                contact_threshold=self.contact_threshold,
+                sensors=DEFAULT_SENSORS  # Explicitly pass the correct sensor configuration
+            )
+            logger.info(f"Proximity manager initialized with {len(DEFAULT_SENSORS)} sensors")
+            
+        except Exception as e:
+            logger.error(f"Error configuring proximity manager with custom sensors: {e}")
+            logger.info("Falling back to default sensor configuration")
+            
+            # Fallback to default config
+            self.proximity = ProximityManager(
+                sampling_rate=self.proximity_sampling_rate,
+                approach_threshold=self.approach_threshold,
+                contact_threshold=self.contact_threshold
+            )
         
         # Initialize motor interface
         if motor_interface_kwargs is None:
@@ -129,10 +147,14 @@ class ProximityController:
         self.finger_fsms = {}
         for sensor_name, finger_name in self.finger_mapping.items():
             self.finger_fsms[finger_name] = FingerFSM(finger_name)
+            # Explicitly set initial state to IDLE
+            self.finger_fsms[finger_name].state = FingerState.IDLE
         
         # Create hand FSM
         logger.info("Initializing hand state machine...")
         self.hand_fsm = HandFSM()
+        # Explicitly set initial state to IDLE
+        self.hand_fsm.state = HandState.IDLE
         
         # Initialize data logger
         if self.enable_logging:
@@ -167,51 +189,96 @@ class ProximityController:
         # Get the finger FSM
         fsm = self.finger_fsms[finger_name]
         
-        # Get sensor distance
-        distance, status = self.proximity.get_sensor_value(
-            sensor_name, filtered=True, with_status=True
-        )
-        
-        # Get motor feedback
-        current = self.motors.get_current(finger_name)
-        position = self.motors.get_position(finger_name)
-        
-        # Get current derivative for slip detection
-        if hasattr(self.motors, 'get_current_derivative'):
-            current_derivative = self.motors.get_current_derivative(finger_name)
-        else:
-            # Fall back to zero if not available
+        try:
+            # Get sensor distance with error handling
+            distance, status = self.proximity.get_sensor_value(
+                sensor_name, filtered=True, with_status=True
+            )
+            
+            # Safety check - if sensor reading is invalid, default to safe distance
+            if distance is None or status == "BAD":
+                logger.debug(f"Invalid sensor reading for {sensor_name}, defaulting to safe distance")
+                # Default to a safe value that won't cause closure
+                distance = 100
+                status = "DEFAULT"
+                
+            # Get motor feedback with error handling
+            try:
+                current = self.motors.get_current(finger_name)
+                position = self.motors.get_position(finger_name)
+            except Exception as e:
+                logger.warning(f"Error getting motor feedback for {finger_name}: {e}")
+                # Default to safe values
+                current = 0.0
+                position = 0.0
+            
+            # Get current derivative for slip detection
             current_derivative = 0.0
-        
-        # Update FSM
-        state, position_target, torque_target = fsm.update(
-            distance, current, current_derivative, position
-        )
-        
-        # Apply control based on state
-        if state == FingerState.IDLE or state == FingerState.APPROACH:
-            # Position control with open hand
-            self.motors.set_position(finger_name, 0.0)
+            if hasattr(self.motors, 'get_current_derivative'):
+                try:
+                    current_derivative = self.motors.get_current_derivative(finger_name)
+                except Exception as e:
+                    logger.debug(f"Error getting current derivative: {e}")
             
-        elif state == FingerState.PROPORTIONAL:
-            # Position control with proportional position
-            self.motors.set_position(finger_name, position_target)
+            # Update FSM with error handling
+            try:
+                state, position_target, torque_target = fsm.update(
+                    distance, current, current_derivative, position
+                )
+            except Exception as e:
+                logger.error(f"Error updating FSM for {finger_name}: {e}")
+                # Default to IDLE state for safety
+                state = FingerState.IDLE
+                position_target = 0.0
+                torque_target = 0.0
             
-        elif state == FingerState.CONTACT:
-            # Torque control
-            self.motors.set_torque(finger_name, torque_target)
+            # Apply control based on state with error handling
+            try:
+                if state == FingerState.IDLE or state == FingerState.APPROACH:
+                    # Position control with open hand
+                    self.motors.set_position(finger_name, 0.0)
+                    
+                elif state == FingerState.PROPORTIONAL:
+                    # Position control with proportional position
+                    self.motors.set_position(finger_name, position_target)
+                    
+                elif state == FingerState.CONTACT:
+                    # Torque control
+                    self.motors.set_torque(finger_name, torque_target)
+            except Exception as e:
+                logger.error(f"Error applying control to {finger_name}: {e}")
+                # Try to set to safe position
+                try:
+                    self.motors.set_position(finger_name, 0.0)
+                except:
+                    pass  # Already tried our best
+                
+            # Return state information for logging/monitoring
+            return {
+                "state": state.name,
+                "distance": distance,
+                "sensor_status": status,
+                "position": position,
+                "position_target": position_target,
+                "current": current,
+                "torque_target": torque_target,
+                "current_derivative": current_derivative
+            }
             
-        # Return state information for logging/monitoring
-        return {
-            "state": state.name,
-            "distance": distance,
-            "sensor_status": status,
-            "position": position,
-            "position_target": position_target,
-            "current": current,
-            "torque_target": torque_target,
-            "current_derivative": current_derivative
-        }
+        except Exception as e:
+            # Catch-all error handler
+            logger.error(f"Unhandled error in _process_finger for {finger_name}: {e}")
+            # Return safe default values
+            return {
+                "state": "ERROR",
+                "distance": 100,  # Far distance
+                "sensor_status": "ERROR",
+                "position": 0.0,
+                "position_target": 0.0,
+                "current": 0.0,
+                "torque_target": 0.0,
+                "current_derivative": 0.0
+            }
     
     def _update_hand_state(self, finger_states):
         """Update hand state machine based on finger states"""
@@ -333,27 +400,98 @@ class ProximityController:
         """Stop all subsystems and the control loop"""
         logger.info("Stopping controller...")
         
-        # Stop control loop
+        # Stop control loop first
         self.running = False
         if self.thread:
             self.thread.join(timeout=1.0)
         
-        # Stop motor interface
-        logger.info("Stopping motors...")
-        if self.motors:
-            self.motors.stop()
+        # SAFETY: First set all fingers to flat/open position 
+        try:
+            if self.motors:
+                logger.info("Safety: Opening hand to flat position...")
+                # Set all standard fingers to open position
+                for finger in self.motors.fingers:
+                    try:
+                        self.motors.set_position(finger, 0.0)
+                    except Exception as e:
+                        logger.error(f"Failed to open finger {finger}: {e}")
+                
+                # Also handle thumb rotation if available
+                try:
+                    if hasattr(self.motors, 'get_finger_status') and "ThumbRotate" in self.motors.position_targets:
+                        self.motors.set_position("ThumbRotate", 0.0)
+                except Exception as e:
+                    logger.error(f"Failed to reset thumb rotation: {e}")
+                
+                # Give motors time to move to position
+                time.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Error during safety hand opening: {e}")
         
-        # Stop proximity manager
-        logger.info("Stopping proximity manager...")
-        if self.proximity:
-            self.proximity.stop()
+        # Now stop components in reverse initialization order
         
         # Stop data logger if enabled
         if self.data_logger:
             logger.info("Stopping data logger...")
-            self.data_logger.stop()
+            try:
+                self.data_logger.stop()
+            except Exception as e:
+                logger.error(f"Error stopping data logger: {e}")
+        
+        # Stop motor interface
+        logger.info("Stopping motors...")
+        if self.motors:
+            try:
+                self.motors.stop()
+            except Exception as e:
+                logger.error(f"Error stopping motors: {e}")
+        
+        # Stop proximity manager last (after we've already set motors to safe position)
+        logger.info("Stopping proximity manager...")
+        if self.proximity:
+            try:
+                self.proximity.stop()
+            except Exception as e:
+                logger.error(f"Error stopping proximity manager: {e}")
         
         logger.info("Proximity controller stopped")
+    
+    def safety_reset(self):
+        """
+        Reset the hand to a safe state (open position).
+        
+        This is useful in case of errors or unexpected behaviors.
+        """
+        logger.info("Performing safety reset...")
+        
+        try:
+            # Set all fingers to open position
+            if self.motors:
+                for finger in self.motors.fingers:
+                    try:
+                        self.motors.set_position(finger, 0.0)
+                    except Exception as e:
+                        logger.error(f"Error resetting {finger}: {e}")
+                
+                # Also reset thumb rotation
+                if hasattr(self.motors, 'get_finger_status') and "ThumbRotate" in self.motors.position_targets:
+                    try:
+                        self.motors.set_position("ThumbRotate", 0.0)
+                    except Exception as e:
+                        logger.error(f"Error resetting ThumbRotate: {e}")
+                
+                # Reset all FSMs to IDLE state
+                for finger, fsm in self.finger_fsms.items():
+                    fsm.state = FingerState.IDLE
+                
+                # Reset hand FSM
+                self.hand_fsm.state = HandState.IDLE
+                
+                logger.info("Safety reset completed")
+                return True
+        except Exception as e:
+            logger.error(f"Error during safety reset: {e}")
+            return False
     
     def get_system_status(self):
         """

@@ -152,7 +152,30 @@ def main():
                         if active:
                             print(f" - {fault.upper()}")
                 
-                print("\nPress Ctrl+C to stop")
+                print("\nControls:")
+                print("Press 'r' + Enter to reset hand to safe position")
+                print("Press Ctrl+C to stop")
+                
+                # Check for keyboard input (non-blocking)
+                import select
+                import termios
+                import tty
+                
+                # Set stdin to non-blocking mode
+                old_settings = termios.tcgetattr(sys.stdin)
+                try:
+                    tty.setcbreak(sys.stdin.fileno())
+                    if select.select([sys.stdin], [], [], 0)[0]:
+                        key = sys.stdin.read(1)
+                        # 'r' key for reset
+                        if key == 'r':
+                            print("\nSAFETY RESET REQUESTED - Opening hand...")
+                            controller.safety_reset()
+                except Exception as e:
+                    # Ignore input errors
+                    pass
+                finally:
+                    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
                 
                 # Sleep for a while
                 time.sleep(0.5)
