@@ -168,6 +168,7 @@ class ProximityController:
         
         # Thread control
         self.running = False
+        self.shutdown_event = threading.Event()  # Event to signal shutdown to all components
         self.thread = None
         
         # Performance monitoring
@@ -181,6 +182,9 @@ class ProximityController:
             "comm_loss": False,
             "sensor_failure": False
         }
+        
+        # Shutdown status
+        self.is_shutting_down = False
         
         logger.info("Proximity controller initialized")
     
@@ -287,53 +291,104 @@ class ProximityController:
         for finger, data in finger_states.items():
             state = FingerState[data["state"]]
             state_counts[state] += 1
+            
+        # Create finger currents dictionary from finger_states data
+        finger_currents = {
+            finger: data["current"] 
+            for finger, data in finger_states.items()
+        }
         
-        # Update hand FSM
-        # Since we don't have IMU, always use STATIC for motion state
-        motion_state = MotionState.STATIC
-        hand_state = self.hand_fsm.update(state_counts, motion_state)
+        # Create simulated IMU parameters since we don't have IMU
+        is_lowering = False        # Without IMU, assume never lowering
+        is_impact_detected = False # Without IMU, assume no impacts
+        is_stationary = True       # Without IMU, assume always stationary
+        time_since_impact = float('inf')  # No impacts, so infinite time
         
-        return hand_state
+        # Update hand FSM with required parameters
+        try:
+            hand_state = self.hand_fsm.update(
+                state_counts,      # Finger states dictionary
+                finger_currents,   # Finger currents dictionary
+                is_lowering,       # Simulated IMU parameter
+                is_impact_detected, # Simulated IMU parameter
+                is_stationary,     # Simulated IMU parameter
+                time_since_impact  # Simulated IMU parameter
+            )
+            return hand_state
+            
+        except Exception as e:
+            logger.error(f"Error updating hand state: {e}")
+            # Keep current state in case of error
+            return self.hand_fsm.state
     
     def _control_loop(self):
         """Main control loop that runs at the specified rate"""
         next_update_time = time.time()
         
-        while self.running:
+        while self.running and not self.shutdown_event.is_set():
+            # Check for shutdown at loop start
+            if self.is_shutting_down or self.shutdown_event.is_set():
+                logger.info("Control loop detected shutdown request, exiting...")
+                break
+                
             start_time = time.time()
             
             # Check if it's time for the next control update
             if start_time >= next_update_time:
                 try:
+                    # Check for shutdown again before main processing
+                    if self.is_shutting_down or self.shutdown_event.is_set():
+                        break
+                        
                     # Read all finger sensors and process control
                     finger_data = {}
                     for sensor_name, finger_name in self.finger_mapping.items():
+                        # Skip if shutting down
+                        if self.is_shutting_down or self.shutdown_event.is_set():
+                            break
                         finger_data[finger_name] = self._process_finger(sensor_name, finger_name)
+                    
+                    # Abort if shutdown detected during processing
+                    if self.is_shutting_down or self.shutdown_event.is_set():
+                        break
                     
                     # Update hand state
                     hand_state = self._update_hand_state(finger_data)
                     
                     # Detect faults
-                    if self.proximity.get_sensor_value("Thumb1", with_status=True)[1] == "BAD" and \
-                       self.proximity.get_sensor_value("Index1", with_status=True)[1] == "BAD":
-                        # Multiple critical sensors failing
-                        self.fault_status["sensor_failure"] = True
-                    else:
-                        self.fault_status["sensor_failure"] = False
+                    try:
+                        if self.proximity.get_sensor_value("Thumb1", with_status=True)[1] == "BAD" and \
+                           self.proximity.get_sensor_value("Index1", with_status=True)[1] == "BAD":
+                            # Multiple critical sensors failing
+                            self.fault_status["sensor_failure"] = True
+                        else:
+                            self.fault_status["sensor_failure"] = False
+                    except Exception as e:
+                        logger.warning(f"Error checking sensor status: {e}")
+                        # Don't change fault status if we can't check
                     
-                    # Log data
-                    if self.data_logger:
-                        log_data = {
-                            "timestamp": time.time(),
-                            "hand_state": hand_state.name,
-                            "fingers": finger_data,
-                            "proximity": {
-                                name: self.proximity.get_sensor_value(name)
-                                for name in self.proximity.sensor_names
-                            },
-                            "faults": self.fault_status
-                        }
-                        self.data_logger.log(log_data)
+                    # Log data if not shutting down
+                    if self.data_logger and not self.is_shutting_down:
+                        try:
+                            proximity_values = {}
+                            # Only get values if not shutting down
+                            if not self.is_shutting_down and not self.shutdown_event.is_set():
+                                for name in self.proximity.sensor_names:
+                                    try:
+                                        proximity_values[name] = self.proximity.get_sensor_value(name)
+                                    except Exception:
+                                        proximity_values[name] = None
+                            
+                            log_data = {
+                                "timestamp": time.time(),
+                                "hand_state": hand_state.name,
+                                "fingers": finger_data,
+                                "proximity": proximity_values,
+                                "faults": self.fault_status
+                            }
+                            self.data_logger.log(log_data)
+                        except Exception as e:
+                            logger.error(f"Error logging data: {e}")
                     
                     # Update timing stats
                     end_time = time.time()
@@ -363,9 +418,18 @@ class ProximityController:
                     # Make sure we don't get stuck
                     next_update_time = time.time() + self.control_interval
             
-            # Small sleep to prevent CPU hogging
+            # Check shutdown before sleeping
+            if self.is_shutting_down or self.shutdown_event.is_set():
+                break
+                
+            # Small sleep to prevent CPU hogging, using Event.wait for interruptible sleep
             sleep_time = max(0.001, next_update_time - time.time())
-            time.sleep(sleep_time)
+            # This will return True if event is set during the wait
+            if self.shutdown_event.wait(sleep_time):
+                logger.info("Control loop received shutdown event during sleep")
+                break
+        
+        logger.info("Control loop exited")
     
     def start(self):
         """Start all subsystems and the control loop"""
@@ -373,6 +437,10 @@ class ProximityController:
         if self.running:
             logger.warning("Controller already running")
             return
+        
+        # Reset shutdown flags
+        self.is_shutting_down = False
+        self.shutdown_event.clear()
         
         # Start proximity manager
         logger.info("Starting proximity manager...")
@@ -400,10 +468,22 @@ class ProximityController:
         """Stop all subsystems and the control loop"""
         logger.info("Stopping controller...")
         
+        # Mark that we're shutting down to prevent new hardware access
+        self.is_shutting_down = True
+        self.shutdown_event.set()
+        
         # Stop control loop first
         self.running = False
-        if self.thread:
-            self.thread.join(timeout=1.0)
+        
+        # Give the control loop thread time to notice shutdown
+        logger.info("Waiting for control thread to exit...")
+        if self.thread and self.thread.is_alive():
+            try:
+                self.thread.join(timeout=2.0)  # Increased timeout for safer shutdown
+                if self.thread.is_alive():
+                    logger.warning("Control thread did not exit within timeout, continuing with shutdown")
+            except Exception as e:
+                logger.error(f"Error joining control thread: {e}")
         
         # SAFETY: First set all fingers to flat/open position 
         try:
@@ -450,6 +530,7 @@ class ProximityController:
         logger.info("Stopping proximity manager...")
         if self.proximity:
             try:
+                # The shutdown_event ensures the proximity manager knows about the shutdown
                 self.proximity.stop()
             except Exception as e:
                 logger.error(f"Error stopping proximity manager: {e}")
@@ -502,6 +583,13 @@ class ProximityController:
         """
         # Get status information
         try:
+            # Check if shutting down
+            if self.is_shutting_down or self.shutdown_event.is_set():
+                return {
+                    "status": "SHUTTING_DOWN",
+                    "faults": self.fault_status
+                }
+                
             # Get current hand state
             hand_state = self.hand_fsm.state
             
@@ -510,24 +598,47 @@ class ProximityController:
             for finger, fsm in self.finger_fsms.items():
                 finger_states[finger] = fsm.state.name
             
-            # Get proximity values
+            # Get proximity values (with graceful failure)
             proximity_values = {}
             for sensor_name in MCP_SENSORS:
-                value, status = self.proximity.get_sensor_value(
-                    sensor_name, filtered=True, with_status=True
-                )
-                proximity_values[sensor_name] = value
+                try:
+                    # Skip if we're shutting down
+                    if self.is_shutting_down or self.shutdown_event.is_set():
+                        proximity_values[sensor_name] = None
+                        continue
+                        
+                    value, status = self.proximity.get_sensor_value(
+                        sensor_name, filtered=True, with_status=True
+                    )
+                    proximity_values[sensor_name] = value
+                except Exception as e:
+                    logger.debug(f"Error getting sensor value for {sensor_name}: {e}")
+                    proximity_values[sensor_name] = None
             
-            # Get motor positions
+            # Get motor positions (with graceful failure)
             positions = {}
             currents = {}
             for finger_name in self.motors.fingers:
-                positions[finger_name] = self.motors.get_position(finger_name)
-                currents[finger_name] = self.motors.get_current(finger_name)
+                try:
+                    positions[finger_name] = self.motors.get_position(finger_name)
+                    currents[finger_name] = self.motors.get_current(finger_name)
+                except Exception as e:
+                    logger.debug(f"Error getting motor data for {finger_name}: {e}")
+                    positions[finger_name] = 0.0
+                    currents[finger_name] = 0.0
             
             # Also get thumb rotator
-            positions["ThumbRotate"] = self.motors.get_position("ThumbRotate")
-            currents["ThumbRotate"] = self.motors.get_current("ThumbRotate")
+            try:
+                if "ThumbRotate" in self.motors.position_targets:
+                    positions["ThumbRotate"] = self.motors.get_position("ThumbRotate")
+                    currents["ThumbRotate"] = self.motors.get_current("ThumbRotate")
+                else:
+                    positions["ThumbRotate"] = 0.0
+                    currents["ThumbRotate"] = 0.0
+            except Exception as e:
+                logger.debug(f"Error getting ThumbRotate data: {e}")
+                positions["ThumbRotate"] = 0.0
+                currents["ThumbRotate"] = 0.0
             
             # Get cycle time statistics
             cycle_stats = {
@@ -545,14 +656,16 @@ class ProximityController:
                 "positions": positions,
                 "currents": currents,
                 "cycle_time": cycle_stats,
-                "faults": self.fault_status
+                "faults": self.fault_status,
+                "status": "RUNNING"
             }
             
         except Exception as e:
             logger.error(f"Error getting system status: {e}")
             return {
                 "error": str(e),
-                "faults": self.fault_status
+                "faults": self.fault_status,
+                "status": "ERROR"
             }
 
 # Simple test code

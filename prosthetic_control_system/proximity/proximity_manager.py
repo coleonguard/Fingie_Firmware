@@ -117,6 +117,7 @@ class ProximityManager:
         
         # Initialize I2C bus
         self.bus = smbus2.SMBus(bus_num)
+        self.bus_lock = threading.RLock()  # Thread-safe lock for I2C bus access
         
         # Sensor data structures
         self.sensor_names = [name for _, _, name in self.sensors]
@@ -134,6 +135,7 @@ class ProximityManager:
         
         # Control variables
         self.running = False
+        self.shutdown_event = threading.Event()  # Event to signal shutdown
         self.thread = None
         self.init_done = {(mux, ch): False for mux, ch, _ in self.sensors}
     
@@ -144,10 +146,18 @@ class ProximityManager:
         Args:
             mux_address: I2C address of the multiplexer
             channel: Channel number to select (0-7)
+            
+        Raises:
+            RuntimeError: If attempting to access hardware during shutdown
         """
+        # Check if we're in shutdown
+        if self.shutdown_event.is_set():
+            raise RuntimeError("Cannot access hardware during shutdown")
+            
         try:
-            self.bus.write_byte(mux_address, 1 << channel)
-            time.sleep(0.0005)  # Small delay for stable switching
+            with self.bus_lock:
+                self.bus.write_byte(mux_address, 1 << channel)
+                time.sleep(0.0005)  # Small delay for stable switching
         except Exception as e:
             logger.error(f"Failed to select channel {channel} on multiplexer {hex(mux_address)}: {e}")
             raise
@@ -159,10 +169,18 @@ class ProximityManager:
         Args:
             reg: 16-bit register address
             val: 8-bit value to write
+            
+        Raises:
+            RuntimeError: If attempting to access hardware during shutdown
         """
+        # Check if we're in shutdown
+        if self.shutdown_event.is_set():
+            raise RuntimeError("Cannot access hardware during shutdown")
+            
         try:
-            hi, lo = reg >> 8 & 0xFF, reg & 0xFF
-            self.bus.write_i2c_block_data(VL6180X_ADDRESS, hi, [lo, val])
+            with self.bus_lock:
+                hi, lo = reg >> 8 & 0xFF, reg & 0xFF
+                self.bus.write_i2c_block_data(VL6180X_ADDRESS, hi, [lo, val])
         except Exception as e:
             logger.error(f"Failed to write {val} to register {hex(reg)}: {e}")
             raise
@@ -176,12 +194,20 @@ class ProximityManager:
             
         Returns:
             The 8-bit value read from the register
+            
+        Raises:
+            RuntimeError: If attempting to access hardware during shutdown
         """
+        # Check if we're in shutdown
+        if self.shutdown_event.is_set():
+            raise RuntimeError("Cannot access hardware during shutdown")
+            
         try:
-            hi, lo = reg >> 8 & 0xFF, reg & 0xFF
-            self.bus.write_i2c_block_data(VL6180X_ADDRESS, hi, [lo])
-            time.sleep(0.0003)
-            return self.bus.read_byte(VL6180X_ADDRESS)
+            with self.bus_lock:
+                hi, lo = reg >> 8 & 0xFF, reg & 0xFF
+                self.bus.write_i2c_block_data(VL6180X_ADDRESS, hi, [lo])
+                time.sleep(0.0003)
+                return self.bus.read_byte(VL6180X_ADDRESS)
         except Exception as e:
             logger.error(f"Failed to read from register {hex(reg)}: {e}")
             raise
@@ -253,8 +279,19 @@ class ProximityManager:
         
         Returns:
             Distance in mm or None if all retry attempts fail
+            
+        Raises:
+            RuntimeError: If attempting to access hardware during shutdown
         """
-        for _ in range(self.n_retries):
+        # Check if we're in shutdown
+        if self.shutdown_event.is_set():
+            raise RuntimeError("Cannot access hardware during shutdown")
+            
+        for attempt in range(self.n_retries):
+            # Check for shutdown again before each retry
+            if self.shutdown_event.is_set():
+                raise RuntimeError("Cannot access hardware during shutdown")
+                
             try:
                 self.start_range()
                 self.wait_ready()
@@ -263,6 +300,16 @@ class ProximityManager:
                 return distance
             except TimeoutError:
                 # Log and retry
+                time.sleep(0.002)
+            except RuntimeError as e:
+                # If we're shutting down, propagate the exception
+                if "shutdown" in str(e):
+                    raise
+                # Otherwise, log and continue with retries
+                logger.warning(f"Error in get_distance (attempt {attempt+1}/{self.n_retries}): {e}")
+            except Exception as e:
+                # Log and retry for other exceptions
+                logger.warning(f"Error in get_distance (attempt {attempt+1}/{self.n_retries}): {e}")
                 time.sleep(0.002)
         
         # All retries failed
@@ -407,24 +454,47 @@ class ProximityManager:
         """
         next_sample_time = time.time()
         
-        while self.running:
+        while self.running and not self.shutdown_event.is_set():
             current_time = time.time()
             
             # Check if it's time for the next sample
             if current_time >= next_sample_time:
-                # Read all sensors
-                self._read_all_sensors()
-                
-                # Calculate next sample time
-                next_sample_time = current_time + self.sampling_interval
+                try:
+                    # Read all sensors if not shutting down
+                    if not self.shutdown_event.is_set():
+                        self._read_all_sensors()
+                    
+                    # Calculate next sample time
+                    next_sample_time = current_time + self.sampling_interval
+                except RuntimeError as e:
+                    # Handle shutdown-related errors gracefully
+                    if "shutdown" in str(e):
+                        logger.info("Sensor thread detected shutdown, exiting...")
+                        break
+                    else:
+                        logger.error(f"Error in sensor thread: {e}")
+                        # Add some delay after errors to avoid rapid retries
+                        time.sleep(0.05)
+                except Exception as e:
+                    logger.error(f"Error in sensor thread: {e}")
+                    # Add some delay after errors to avoid rapid retries
+                    time.sleep(0.05)
             
-            # Small sleep to prevent CPU hogging
-            time.sleep(0.001)
+            # Check shutdown between iterations with small delay
+            if self.shutdown_event.wait(0.001):  # Will wait 1ms and return True if event is set
+                logger.info("Sensor thread received shutdown event")
+                break
     
     def start(self):
         """Start the sensor reading thread"""
         if not self.running:
+            # Clear shutdown event if it was previously set
+            self.shutdown_event.clear()
+            
+            # Set running flag
             self.running = True
+            
+            # Start reading thread
             self.thread = threading.Thread(target=self._sensor_reading_thread)
             self.thread.daemon = True  # Allow program to exit even if thread is running
             self.thread.start()
@@ -432,25 +502,48 @@ class ProximityManager:
     
     def stop(self):
         """Stop the sensor reading thread and clean up resources"""
+        logger.info("Stopping proximity manager...")
+        
+        # First, signal shutdown to prevent new hardware access
+        self.shutdown_event.set()
+        
+        # Clear running flag to stop the thread loop
         self.running = False
-        if self.thread:
-            self.thread.join(timeout=1.0)  # Wait for thread to finish
-            
-        # Clean up - disable all multiplexer channels
-        try:
-            # Get unique mux addresses
-            mux_addresses = set(mux for mux, _, _ in self.sensors)
-            
-            # Disable all channels on each mux
-            for mux in mux_addresses:
-                self.bus.write_byte(mux, 0x00)
+        
+        # Wait for thread to finish with timeout
+        if self.thread and self.thread.is_alive():
+            logger.info("Waiting for sensor thread to exit...")
+            try:
+                self.thread.join(timeout=2.0)  # Longer timeout for safer shutdown
                 
-            # Close the bus
-            self.bus.close()
-            
+                if self.thread.is_alive():
+                    logger.warning("Sensor thread did not exit gracefully within timeout")
+                else:
+                    logger.info("Sensor thread exited gracefully")
+            except Exception as e:
+                logger.error(f"Error while joining thread: {e}")
+        
+        # Clean up I2C resources with lock to prevent conflicts
+        try:
+            with self.bus_lock:
+                # Get unique mux addresses
+                mux_addresses = set(mux for mux, _, _ in self.sensors)
+                
+                # Disable all channels on each mux
+                for mux in mux_addresses:
+                    try:
+                        logger.debug(f"Disabling multiplexer at {hex(mux)}")
+                        self.bus.write_byte(mux, 0x00)
+                    except Exception as e:
+                        logger.warning(f"Error disabling multiplexer {hex(mux)}: {e}")
+                
+                # Close the bus
+                logger.debug("Closing I2C bus")
+                self.bus.close()
+                
         except Exception as e:
-            logger.warning(f"Error during cleanup: {e}")
-            
+            logger.warning(f"Error during I2C cleanup: {e}")
+        
         logger.info("Proximity manager stopped")
     
     def test_sensors(self, duration=10):
