@@ -2,6 +2,44 @@
 
 This directory contains command-line tools for directly testing and calibrating hardware components of the prosthetic control system. These tools allow you to verify the functionality of individual components before integrating them into the full system.
 
+## Ability Hand Integration
+
+The system interfaces with the PSYONIC Ability Hand prosthetic through the `ability-hand-api` included in the root of the project. This API provides a Python wrapper for communicating with the hand.
+
+### API Location and Structure
+
+The Ability Hand API is included directly in the project at:
+```
+/ability-hand-api/
+```
+
+Key files and directories:
+- `python/ah_wrapper/` - Core Python wrapper modules
+- `python/ah_wrapper/ah_serial_client.py` - Main client for communication
+- `python/docs/` - Documentation for the API
+- `Documentation/ABILITY-HAND-ICD.pdf` - Interface Control Document
+
+### Integration Method
+
+The `AbilityHandInterface` class in `prosthetic_control_system/hand/ability_hand_interface.py` interfaces with the API by importing:
+
+```python
+from ah_wrapper.ah_serial_client import AHSerialClient
+```
+
+This import resolution works because we ensure the API path is in the Python path. The system is designed to gracefully fallback to a simulated mode if the API is not available.
+
+### Enabling UART and Byte Stuffing
+
+Before using the hardware tools with the Ability Hand, you must enable UART communication and byte stuffing using the PSYONIC App:
+
+1. Connect to the hand in the PSYONIC App
+2. Navigate to: Scan → SELECT HAND → Gear Icon ⚙️ → Troubleshoot → Developer Mode
+3. Issue these commands individually:
+   - We16
+   - We46
+   - We47
+
 ## Tools Overview
 
 | Tool | Description | Hardware Required |
@@ -153,19 +191,21 @@ python -m hardware_tools.test_imu --stream --duration 10
 
 ### test_motor.py
 
-Tests motor control and feedback.
+Tests motor control and feedback for the Ability Hand.
 
 ```
 Usage: python -m hardware_tools.test_motor [options]
 
 Options:
-  --port STRING          Serial port of Ability Hand
-  --baud INT             Baud rate (default: 115200)
+  --port STRING          Serial port of Ability Hand (auto-detected if not specified)
+  --baud INT             Baud rate (default: 460800)
   --status               Show motor status
-  --finger INT           Finger index (0: Thumb, 1: Index, 2: Middle, 3: Ring, 4: Pinky)
+  --finger INT           Finger index (0: Thumb, 1: Index, 2: Middle, 3: Ring, 4: Pinky, 5: ThumbRotate)
   --position FLOAT       Set position (0-100 degrees)
   --current FLOAT        Set current (0-0.6 A)
   --sequence             Run test sequence
+  --plot                 Show real-time plot of motor data
+  --duration FLOAT       Duration in seconds (default: 5)
 ```
 
 Example:
@@ -178,6 +218,9 @@ python -m hardware_tools.test_motor --finger 0 --position 45
 
 # Current control of index finger
 python -m hardware_tools.test_motor --finger 1 --current 0.3
+
+# Run test sequence with plotting
+python -m hardware_tools.test_motor --sequence --plot
 ```
 
 ### calibrate_sensors.py
@@ -276,3 +319,29 @@ python -m hardware_tools.monitor_sensors --log
 ```
 
 This will display real-time data from all sensors and log the data to a file for later analysis. Monitor the data to verify that all components are functioning correctly together before launching the full controller.
+
+## Troubleshooting
+
+### Ability Hand Connection Issues
+
+1. Verify the hand is powered on
+2. Check USB connection and permissions
+3. Try different baud rates (default: 460800)
+4. Ensure UART and byte stuffing are enabled via the app (We16, We46, We47 commands)
+5. Check if the correct serial port is being used
+
+### I2C Issues
+
+1. Check I2C bus number (`i2cdetect -l`)
+2. Verify wiring and connections
+3. Check power supply to sensors
+4. Try different I2C speeds with `--bus-speed` option
+
+### Permission Issues on Linux
+
+If you have permission issues accessing hardware on Linux, add your user to the appropriate groups:
+
+```bash
+sudo usermod -a -G dialout,i2c $USER
+# Log out and log back in for changes to take effect
+```
