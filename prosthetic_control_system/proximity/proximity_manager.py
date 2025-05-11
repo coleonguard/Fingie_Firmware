@@ -525,22 +525,41 @@ class ProximityManager:
         
         # Clean up I2C resources with lock to prevent conflicts
         try:
-            with self.bus_lock:
-                # Get unique mux addresses
-                mux_addresses = set(mux for mux, _, _ in self.sensors)
-                
-                # Disable all channels on each mux
-                for mux in mux_addresses:
+            # Use a new bus handle for cleanup to avoid "already closed" issues
+            bus_is_open = True
+            try:
+                # Try to access the bus to see if it's still open - using hasattr to check if the file descriptor exists
+                with self.bus_lock:
+                    # Check if the bus has a valid file descriptor
+                    if hasattr(self.bus, '_fd') and self.bus._fd is not None:
+                        bus_is_open = True
+                    else:
+                        bus_is_open = False
+                        logger.debug("I2C bus file descriptor is None, bus appears to be closed")
+            except Exception as e:
+                bus_is_open = False
+                logger.debug(f"I2C bus appears to be already closed: {e}")
+            
+            # Only perform cleanup if the bus is still open
+            if bus_is_open:
+                with self.bus_lock:
                     try:
-                        logger.debug(f"Disabling multiplexer at {hex(mux)}")
-                        self.bus.write_byte(mux, 0x00)
+                        # Get unique mux addresses
+                        mux_addresses = set(mux for mux, _, _ in self.sensors)
+                        
+                        # Disable all channels on each mux
+                        for mux in mux_addresses:
+                            try:
+                                logger.debug(f"Disabling multiplexer at {hex(mux)}")
+                                self.bus.write_byte(mux, 0x00)
+                            except Exception as e:
+                                logger.warning(f"Error disabling multiplexer {hex(mux)}: {e}")
+                        
+                        # Close the bus
+                        logger.debug("Closing I2C bus")
+                        self.bus.close()
                     except Exception as e:
-                        logger.warning(f"Error disabling multiplexer {hex(mux)}: {e}")
-                
-                # Close the bus
-                logger.debug("Closing I2C bus")
-                self.bus.close()
-                
+                        logger.warning(f"Error during I2C operations: {e}")
         except Exception as e:
             logger.warning(f"Error during I2C cleanup: {e}")
         

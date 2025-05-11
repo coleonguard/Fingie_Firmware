@@ -355,12 +355,40 @@ class ProximityController:
                     # Update hand state
                     hand_state = self._update_hand_state(finger_data)
                     
-                    # Detect faults
+                    # Detect faults (more gracefully with retries)
                     try:
-                        if self.proximity.get_sensor_value("Thumb1", with_status=True)[1] == "BAD" and \
-                           self.proximity.get_sensor_value("Index1", with_status=True)[1] == "BAD":
-                            # Multiple critical sensors failing
+                        # Count bad sensors instead of just checking two specific ones
+                        bad_sensors = 0
+                        critical_sensors = ["Thumb1", "Index1", "Middle1", "Ring1", "Pinky1"]
+                        
+                        for sensor in critical_sensors:
+                            try:
+                                # Skip if we're shutting down
+                                if self.is_shutting_down or self.shutdown_event.is_set():
+                                    break
+                                    
+                                # Get sensor status with retry
+                                status = "BAD"  # Default to BAD
+                                for retry in range(3):
+                                    try:
+                                        _, status = self.proximity.get_sensor_value(sensor, with_status=True)
+                                        if status != "BAD":
+                                            break
+                                        time.sleep(0.002)  # Small delay between retries
+                                    except Exception:
+                                        time.sleep(0.002)
+                                
+                                if status == "BAD":
+                                    bad_sensors += 1
+                                    logger.debug(f"Sensor {sensor} is BAD")
+                            except Exception as e:
+                                logger.debug(f"Error checking sensor {sensor}: {e}")
+                                bad_sensors += 1
+                        
+                        # Set fault if more than 2 critical sensors are bad
+                        if bad_sensors >= 2:
                             self.fault_status["sensor_failure"] = True
+                            logger.warning(f"Sensor failure detected: {bad_sensors} critical sensors failing")
                         else:
                             self.fault_status["sensor_failure"] = False
                     except Exception as e:
@@ -379,14 +407,26 @@ class ProximityController:
                                     except Exception:
                                         proximity_values[name] = None
                             
+                            # Create log data compatible with logger format
                             log_data = {
                                 "timestamp": time.time(),
                                 "hand_state": hand_state.name,
                                 "fingers": finger_data,
-                                "proximity": proximity_values,
+                                "proximity": {
+                                    "raw": proximity_values,
+                                    "filtered": proximity_values,
+                                    "status": {name: "OK" for name in proximity_values}
+                                },
+                                "imu": {
+                                    "orientation": {"roll": 0.0, "pitch": 0.0, "yaw": 0.0},
+                                    "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0},
+                                    "angular_rate": {"x": 0.0, "y": 0.0, "z": 0.0},
+                                    "motion_state": "STATIC"
+                                },
                                 "faults": self.fault_status
                             }
-                            self.data_logger.log(log_data)
+                            # Use the correct method name (log_data instead of log)
+                            self.data_logger.log_data(log_data)
                         except Exception as e:
                             logger.error(f"Error logging data: {e}")
                     
