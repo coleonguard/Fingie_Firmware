@@ -405,6 +405,114 @@ class AbilityHandInterface(MotorInterface):
                 pass
             
         logger.info("Ability Hand interface stopped")
+        
+    def set_position(self, finger, position):
+        """
+        Set position target for a finger.
+        
+        Args:
+            finger: Name of finger to control
+            position: Target position (degrees or normalized)
+        """
+        if finger in self.fingers or finger == "ThumbRotate":
+            # Clamp to safe range
+            safe_position = max(0.0, min(position, self.max_position))
+            self.position_targets[finger] = safe_position
+            self.control_modes[finger] = ControlMode.POSITION
+            
+            # Reset watchdog timeout
+            self.last_update_time = time.time()
+            self.fault_status["watchdog"] = False
+        else:
+            logger.warning(f"Invalid finger name: {finger}")
+    
+    def set_velocity(self, finger, velocity):
+        """
+        Set velocity target for a finger.
+        
+        Args:
+            finger: Name of finger to control
+            velocity: Target velocity (degrees/s or normalized)
+        """
+        if finger in self.fingers or finger == "ThumbRotate":
+            # Clamp to safe range
+            safe_velocity = max(-self.max_velocity, min(velocity, self.max_velocity))
+            self.velocity_targets[finger] = safe_velocity
+            self.control_modes[finger] = ControlMode.VELOCITY
+            
+            # Reset watchdog timeout
+            self.last_update_time = time.time()
+            self.fault_status["watchdog"] = False
+        else:
+            logger.warning(f"Invalid finger name: {finger}")
+    
+    def set_torque(self, finger, torque):
+        """
+        Set torque target for a finger.
+        
+        Args:
+            finger: Name of finger to control
+            torque: Target torque (Nm or normalized)
+        """
+        if finger in self.fingers or finger == "ThumbRotate":
+            # Clamp to safe range
+            safe_torque = max(-self.max_torque, min(torque, self.max_torque))
+            self.torque_targets[finger] = safe_torque
+            self.control_modes[finger] = ControlMode.TORQUE
+            
+            # Reset watchdog timeout
+            self.last_update_time = time.time()
+            self.fault_status["watchdog"] = False
+        else:
+            logger.warning(f"Invalid finger name: {finger}")
+    
+    def set_duty(self, finger, duty):
+        """
+        Set duty cycle target for a finger.
+        
+        Args:
+            finger: Name of finger to control
+            duty: Target duty cycle (%)
+        """
+        if finger in self.fingers or finger == "ThumbRotate":
+            # Clamp to safe range
+            safe_duty = max(-self.max_duty, min(duty, self.max_duty))
+            self.duty_targets[finger] = safe_duty
+            self.control_modes[finger] = ControlMode.DUTY
+            
+            # Reset watchdog timeout
+            self.last_update_time = time.time()
+            self.fault_status["watchdog"] = False
+        else:
+            logger.warning(f"Invalid finger name: {finger}")
+    
+    def get_finger_status(self, finger):
+        """
+        Get comprehensive status for a finger.
+        
+        Args:
+            finger: Name of finger
+            
+        Returns:
+            Dictionary with current status
+        """
+        # Special handling for ThumbRotate which is not in self.fingers list
+        if finger == "ThumbRotate":
+            return {
+                "finger": finger,
+                "mode": self.control_modes[finger].name,
+                "position": self.position_feedback[finger],
+                "velocity": self.velocity_feedback[finger],
+                "torque": self.torque_feedback[finger],
+                "current": self.current_feedback[finger],
+                "position_target": self.position_targets[finger],
+                "velocity_target": self.velocity_targets[finger],
+                "torque_target": self.torque_targets[finger],
+                "duty_target": self.duty_targets[finger]
+            }
+        else:
+            # Use parent class implementation for regular fingers
+            return super().get_finger_status(finger)
     
     def get_current_derivative(self, finger):
         """
