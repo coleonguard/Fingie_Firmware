@@ -1,0 +1,6 @@
+*.d
+*.o
+*.out
+*.idea
+*.vscode
+*.ropeproject
