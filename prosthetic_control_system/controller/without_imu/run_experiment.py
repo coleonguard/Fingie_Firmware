@@ -17,10 +17,13 @@ import threading
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO,  # Can change to logging.DEBUG for more detailed output
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("ExperimentController")
+
+# Set logger level explicitly
+logger.setLevel(logging.INFO)  # Can change to logging.DEBUG for more detailed output
 
 # Add all necessary directories to path
 # First get the repository root directory (Fingie_Firmware)
@@ -158,6 +161,10 @@ class ExperimentController:
             sensor_key = f"{finger_name}_sensor"
             prev_distance = self.prev_distances.get(sensor_key, 100)
             self.prev_distances[sensor_key] = distance
+            
+            # Debug output
+            logger.debug(f"{finger_name}: distance={distance}mm, state={self.twitch_state[finger_name]}, "
+                        f"awaiting_reset={self.awaiting_reset[finger_name]}, position={position}°")
 
             # Implement twitching behavior - only for MCP sensors (prox1)
             if sensor_name.endswith("1"):
@@ -195,7 +202,7 @@ class ExperimentController:
                         logger.error(f"Error setting position for {finger_name}: {e}")
                 
                 # CASE 3: Finger is opening and has reached open position
-                elif self.twitch_state[finger_name] == 2 and position <= 1.0:
+                elif self.twitch_state[finger_name] == 2 and position <= 2.5:  # Increased threshold to 2.5 degrees
                     # Once we've opened up, enter reset waiting state
                     # The finger won't twitch again until object moves away beyond 40mm
                     self.twitch_state[finger_name] = 0
@@ -206,7 +213,15 @@ class ExperimentController:
                 elif self.awaiting_reset[finger_name] and distance >= 40:
                     # Object has moved far enough away (>=40mm), allow new twitches
                     self.awaiting_reset[finger_name] = False
-                    logger.debug(f"{finger_name} reset - object moved away, ready for new twitch")
+                    # Ensure twitch state is properly reset to idle
+                    self.twitch_state[finger_name] = 0
+                    # Make sure position is zeroed
+                    if self.motors and not self.shutdown_event.is_set():
+                        try:
+                            self.motors.set_position(finger_name, 0.0)
+                        except Exception as e:
+                            logger.error(f"Error setting position during reset for {finger_name}: {e}")
+                    logger.info(f"{finger_name} RESET - object moved away, ready for new twitch")
                 
                 # CASE 5: If we're in the middle of a twitch, keep the current target
                 elif self.twitch_state[finger_name] in (1, 2):
@@ -450,7 +465,15 @@ def main():
     parser.add_argument('--proximity-rate', type=int, default=5,
                       help='Proximity sensor sampling rate in Hz (default: 5)')
     
+    parser.add_argument('--debug', action='store_true',
+                      help='Enable debug logging')
+    
     args = parser.parse_args()
+    
+    # Set debug logging if requested
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled")
     
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
