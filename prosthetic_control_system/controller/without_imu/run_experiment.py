@@ -108,9 +108,14 @@ class ExperimentController:
         self.finger_mapping = FINGER_MAPPING
         
         # Twitch state for each finger (used to track the twitch cycle)
-        # 0 = idle (no twitch), 1 = closing, 2 = opening
+        # 0 = idle (no twitch), 1 = closing, 2 = opening, 3 = reset (waiting for object to move away)
         self.twitch_state = {finger: 0 for finger in self.motors.fingers}
         self.twitch_position = {finger: 0.0 for finger in self.motors.fingers}
+        
+        # Track previous distance readings to detect when objects move away
+        self.prev_distances = {}
+        # Track whether we're waiting for the object to move away before allowing another twitch
+        self.awaiting_reset = {finger: False for finger in self.motors.fingers}
         
         # Thread control
         self.running = False
@@ -149,10 +154,19 @@ class ExperimentController:
                 logger.warning(f"Error getting position for {finger_name}: {e}")
                 position = 0.0  # Default to fully open
             
+            # Store distance for tracking object movements
+            sensor_key = f"{finger_name}_sensor"
+            prev_distance = self.prev_distances.get(sensor_key, 100)
+            self.prev_distances[sensor_key] = distance
+
             # Implement twitching behavior - only for MCP sensors (prox1)
-            if sensor_name.endswith("1") and distance <= 25:  # Within 25mm
-                # Check current twitch state
-                if self.twitch_state[finger_name] == 0:
+            if sensor_name.endswith("1"):
+                # Check if this is the first reading for this finger
+                if sensor_key not in self.prev_distances:
+                    self.prev_distances[sensor_key] = distance
+                
+                # CASE 1: Object is within twitching range (25mm) and we're ready for a new twitch
+                if distance <= 25 and self.twitch_state[finger_name] == 0 and not self.awaiting_reset[finger_name]:
                     # Start closing (twitch phase 1)
                     target_position = 5.0  # Close 5 degrees
                     self.twitch_state[finger_name] = 1
@@ -165,6 +179,7 @@ class ExperimentController:
                     except Exception as e:
                         logger.error(f"Error setting position for {finger_name}: {e}")
                 
+                # CASE 2: Finger is closing and has reached the target position
                 elif self.twitch_state[finger_name] == 1 and position >= 4.0:
                     # Once we've reached close to 5 degrees, start opening (twitch phase 2)
                     # Using 4.0 as threshold to account for motor lag
@@ -179,13 +194,21 @@ class ExperimentController:
                     except Exception as e:
                         logger.error(f"Error setting position for {finger_name}: {e}")
                 
+                # CASE 3: Finger is opening and has reached open position
                 elif self.twitch_state[finger_name] == 2 and position <= 1.0:
-                    # Once we've opened up, reset twitch state for next cycle
-                    # Using 1.0 as threshold to account for motor lag
+                    # Once we've opened up, enter reset waiting state
+                    # The finger won't twitch again until object moves away beyond 40mm
                     self.twitch_state[finger_name] = 0
-                    logger.debug(f"{finger_name} completed twitch cycle")
+                    self.awaiting_reset[finger_name] = True
+                    logger.debug(f"{finger_name} completed twitch cycle, waiting for object to move away")
                 
-                # If we're in the middle of a twitch, keep the current target
+                # CASE 4: Check if object has moved away enough for a new twitch
+                elif self.awaiting_reset[finger_name] and distance >= 40:
+                    # Object has moved far enough away (>=40mm), allow new twitches
+                    self.awaiting_reset[finger_name] = False
+                    logger.debug(f"{finger_name} reset - object moved away, ready for new twitch")
+                
+                # CASE 5: If we're in the middle of a twitch, keep the current target
                 elif self.twitch_state[finger_name] in (1, 2):
                     target_position = self.twitch_position[finger_name]
                     try:
@@ -193,11 +216,15 @@ class ExperimentController:
                     except Exception as e:
                         logger.error(f"Error setting position for {finger_name}: {e}")
             
+            # If not an MCP sensor or object is too far away
             else:
-                # If not within 10mm or not an MCP sensor, ensure finger is open
+                # If not within 25mm or not an MCP sensor, ensure finger is open
                 # Only reset if we're not in the middle of opening already
                 if self.twitch_state[finger_name] != 2:
                     target_position = 0.0
+                    
+                    # Keep twitch state at 0, but don't reset awaiting_reset flag
+                    # (that only gets reset when object moves far enough away)
                     self.twitch_state[finger_name] = 0
                     
                     try:
@@ -211,6 +238,7 @@ class ExperimentController:
                 "status": status,
                 "position": position,
                 "twitch_state": self.twitch_state[finger_name],
+                "awaiting_reset": self.awaiting_reset[finger_name],
                 "target_position": self.twitch_position.get(finger_name, 0.0)
             }
             
@@ -361,10 +389,14 @@ class ExperimentController:
                 position = self.motors.get_position(finger_name)
                 current = self.motors.get_current(finger_name)
                 twitch_state = self.twitch_state.get(finger_name, 0)
+                awaiting_reset = self.awaiting_reset.get(finger_name, False)
                 
                 # Convert twitch state to descriptive string
                 if twitch_state == 0:
-                    state_str = "IDLE"
+                    if awaiting_reset:
+                        state_str = "WAITING"
+                    else:
+                        state_str = "IDLE"
                 elif twitch_state == 1:
                     state_str = "CLOSING"
                 elif twitch_state == 2:
@@ -376,6 +408,7 @@ class ExperimentController:
                     "position": position,
                     "current": current,
                     "twitch_state": state_str,
+                    "awaiting_reset": awaiting_reset,
                     "target": self.twitch_position.get(finger_name, 0.0)
                 }
             except Exception as e:
@@ -447,6 +480,8 @@ def main():
         print("----------------------------------------------------------")
         print("This controller makes fingers twitch (close 5° then reopen)")
         print("when proximity sensors detect objects within 25mm")
+        print("\nAfter each twitch, the finger enters a RESET state and waits until")
+        print("the object has moved away to at least 40mm before allowing a new twitch.")
         print("\nNote: VL6180X sensors report distance readings up to 100mm range")
         print("When no object is detected, the sensor reports the maximum distance value.")
         print("Status will be OK for valid readings, SUB for substituted values, and BAD for failures.")
@@ -467,7 +502,10 @@ def main():
                 print("\nFinger Status:")
                 print("-------------")
                 for finger, data in status["fingers"].items():
-                    print(f"{finger:10s}: {data['twitch_state']:10s} | "
+                    # Add reset indicator if awaiting_reset is True
+                    reset_indicator = "(RESET)" if data.get('awaiting_reset', False) else ""
+                    
+                    print(f"{finger:10s}: {data['twitch_state']:10s} {reset_indicator:8s} | "
                           f"Pos: {data['position']:5.1f}° | "
                           f"Target: {data['target']:5.1f}° | "
                           f"Current: {data['current']:.3f}A")
