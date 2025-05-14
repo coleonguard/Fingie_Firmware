@@ -37,6 +37,16 @@ DEFAULT_CONFIG = {
     "min_time_in_proportional": 0.3, # Minimum time in PROPORTIONAL state before transitioning (seconds)
     "min_time_in_contact": 0.2,      # Minimum time in CONTACT state before transitioning (seconds)
     
+    # Motor movement speed control
+    "max_position_change_per_second": 15.0,  # Degrees per second (lower = slower movement)
+    "max_finger_angles": {              # Maximum allowed closure angle for each finger (to prevent self-detection)
+        "Thumb": 35.0,                   # Approx. 50% of full closure
+        "Index": 40.0,
+        "Middle": 40.0,
+        "Ring": 40.0,
+        "Pinky": 35.0
+    }
+    
     # Debug settings
     "verbose_logging": False,         # Set to True for verbose debug logging
 }
@@ -72,6 +82,18 @@ FINGER_MAPPING = {
 
 # MCP joint sensors - primary control sensors
 MCP_SENSORS = ["Thumb1", "Index1", "Middle1", "Ring1", "Pinky1"]
+
+# PIP joint sensors - secondary sensors
+PIP_SENSORS = ["Thumb2", "Index2", "Middle2", "Ring2", "Pinky2"]
+
+# Finger-to-finger fallback mapping for when all sensors for a finger fail
+FINGER_FALLBACK_MAP = {
+    "Thumb": ["Index", "Middle"],         # If thumb sensors fail, try Index then Middle
+    "Index": ["Middle", "Thumb"],         # If index sensors fail, try Middle then Thumb
+    "Middle": ["Index", "Ring"],          # If middle sensors fail, try Index then Ring
+    "Ring": ["Middle", "Pinky"],          # If ring sensors fail, try Middle then Pinky
+    "Pinky": ["Ring", "Middle"]           # If pinky sensors fail, try Ring then Middle
+}
 
 # Distance ranges for control (in mm)
 DISTANCE_RANGES = {

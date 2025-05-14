@@ -67,6 +67,8 @@ class ProximityController:
                  min_time_in_approach: float = DEFAULT_CONFIG["min_time_in_approach"],
                  min_time_in_proportional: float = DEFAULT_CONFIG["min_time_in_proportional"],
                  min_time_in_contact: float = DEFAULT_CONFIG["min_time_in_contact"],
+                 max_position_change_per_second: float = DEFAULT_CONFIG["max_position_change_per_second"],
+                 max_finger_angles: dict = DEFAULT_CONFIG["max_finger_angles"],
                  verbose_logging: bool = DEFAULT_CONFIG["verbose_logging"]):
         """
         Initialize the proximity controller.
@@ -102,6 +104,36 @@ class ProximityController:
         if verbose_logging:
             logger.setLevel(logging.DEBUG)
             logger.debug("Verbose logging enabled")
+            
+        # Motor movement speed control
+        self.max_position_change_per_second = max_position_change_per_second
+        self.max_finger_angles = max_finger_angles
+        
+        # Track previous position targets for speed limiting
+        self.previous_position_targets = {finger: 0.0 for finger in self.finger_mapping.values()}
+        self.previous_target_time = {finger: time.time() for finger in self.finger_mapping.values()}
+        
+        # Track finger sensor substitutions
+        self.finger_substitutions = {finger: None for finger in self.finger_mapping.values()}
+        
+        # Sensor analysis data collection
+        self.sensor_analysis = {
+            'mcp_readings': {},       # Raw MCP sensor readings
+            'pip_readings': {},       # Raw PIP sensor readings
+            'mcp_pip_diff': {},       # Difference between MCP and PIP sensors
+            'correlations': {},       # Statistical correlations
+            'collection_start': None,  # When analysis collection started
+            'collection_duration': 0   # How long analysis has been running
+        }
+        
+        # Initialize analysis for each finger
+        for finger_name in self.finger_mapping.values():
+            sensors = self._get_finger_sensors(finger_name)
+            if sensors['primary'] and sensors['secondary']:
+                # Only track fingers with both sensors
+                self.sensor_analysis['mcp_readings'][finger_name] = []
+                self.sensor_analysis['pip_readings'][finger_name] = []
+                self.sensor_analysis['mcp_pip_diff'][finger_name] = []
         
         # Set up logging
         if log_dir is None:
@@ -239,10 +271,93 @@ class ProximityController:
         fsm = self.finger_fsms[finger_name]
         
         try:
-            # Get sensor distance with error handling
+            # Try to get associated MCP and PIP sensors for this finger
+            finger_sensors = self._get_finger_sensors(finger_name)
+            primary_sensor = finger_sensors.get('primary', sensor_name)
+            secondary_sensor = finger_sensors.get('secondary', None)
+            
+            # Check if we need to substitute from another finger
+            substituted_from = None
+            
+            # Get primary sensor value with error handling
             distance, status = self.proximity.get_sensor_value(
-                sensor_name, filtered=True, with_status=True
+                primary_sensor, filtered=True, with_status=True
             )
+            
+            # Always get secondary sensor value if available for analysis
+            secondary_distance = None
+            secondary_status = "NONE"
+            if secondary_sensor is not None:
+                secondary_distance, secondary_status = self.proximity.get_sensor_value(
+                    secondary_sensor, filtered=True, with_status=True
+                )
+                
+                # Collect data for MCP vs PIP analysis if both readings are valid
+                if self.sensor_analysis['collection_start'] is not None and \
+                   status != "BAD" and secondary_status != "BAD" and \
+                   distance is not None and secondary_distance is not None:
+                    # Store readings for analysis
+                    if finger_name in self.sensor_analysis['mcp_readings']:
+                        self.sensor_analysis['mcp_readings'][finger_name].append(distance)
+                        self.sensor_analysis['pip_readings'][finger_name].append(secondary_distance)
+                        self.sensor_analysis['mcp_pip_diff'][finger_name].append(distance - secondary_distance)
+                        # Keep lists at a reasonable size
+                        max_samples = 1000
+                        if len(self.sensor_analysis['mcp_readings'][finger_name]) > max_samples:
+                            self.sensor_analysis['mcp_readings'][finger_name] = self.sensor_analysis['mcp_readings'][finger_name][-max_samples:]
+                            self.sensor_analysis['pip_readings'][finger_name] = self.sensor_analysis['pip_readings'][finger_name][-max_samples:]
+                            self.sensor_analysis['mcp_pip_diff'][finger_name] = self.sensor_analysis['mcp_pip_diff'][finger_name][-max_samples:]
+            
+            # Try secondary sensor if primary is BAD
+            if (status == "BAD" or distance is None) and secondary_sensor is not None and \
+               secondary_status != "BAD" and secondary_distance is not None:
+                logger.debug(f"Primary sensor {primary_sensor} is {status}, using secondary {secondary_sensor}")
+                distance = secondary_distance
+                status = "SEC" # Mark as coming from secondary sensor
+                logger.debug(f"Using secondary sensor {secondary_sensor} with value {distance}mm")
+            
+            # Cross-finger fallback - if both sensors are bad, try another finger
+            if status == "BAD" or distance is None:
+                # Get the fallback mapping for this finger
+                fallback_fingers = FINGER_FALLBACK_MAP.get(finger_name, [])
+                
+                for fallback_finger in fallback_fingers:
+                    # Skip if we're already using this as a fallback
+                    if self.finger_substitutions.get(fallback_finger) is not None:
+                        logger.debug(f"Skipping {fallback_finger} as fallback for {finger_name} (already substituted)")
+                        continue
+                    
+                    # Get sensors for fallback finger
+                    fallback_sensors = self._get_finger_sensors(fallback_finger)
+                    
+                    # Try primary sensor of fallback finger
+                    fallback_primary = fallback_sensors.get('primary')
+                    if fallback_primary:
+                        fb_distance, fb_status = self.proximity.get_sensor_value(
+                            fallback_primary, filtered=True, with_status=True
+                        )
+                        if fb_status != "BAD" and fb_distance is not None:
+                            distance = fb_distance
+                            status = "FB"  # Mark as coming from fallback finger
+                            substituted_from = fallback_finger
+                            logger.info(f"FINGER FALLBACK: Using {fallback_finger} ({fallback_primary}) for {finger_name}")
+                            break
+                    
+                    # Try secondary sensor of fallback finger if primary failed
+                    fallback_secondary = fallback_sensors.get('secondary')
+                    if fallback_secondary:
+                        fb_distance, fb_status = self.proximity.get_sensor_value(
+                            fallback_secondary, filtered=True, with_status=True
+                        )
+                        if fb_status != "BAD" and fb_distance is not None:
+                            distance = fb_distance
+                            status = "FB"  # Mark as coming from fallback finger
+                            substituted_from = fallback_finger
+                            logger.info(f"FINGER FALLBACK: Using {fallback_finger} ({fallback_secondary}) for {finger_name}")
+                            break
+                
+                # Record the substitution for tracking
+                self.finger_substitutions[finger_name] = substituted_from
             
             # Safety check - if sensor reading is invalid, default to safe distance
             if distance is None or status == "BAD":
@@ -419,17 +534,57 @@ class ProximityController:
             
             # Apply control based on state with error handling
             try:
+                # Apply maximum finger angle limit to prevent self-detection
+                max_angle = self.max_finger_angles.get(finger_name, 45.0)
+                
+                # If position_target exceeds max angle, clamp it
+                if position_target > max_angle:
+                    logger.debug(f"{finger_name} position target {position_target:.1f}° limited to {max_angle:.1f}°")
+                    position_target = max_angle
+                
+                # Calculate time since last position command
+                current_time = time.time()
+                last_time = self.previous_target_time.get(finger_name, current_time)
+                time_diff = current_time - last_time
+                
+                # Calculate maximum allowed position change based on time difference
+                max_change = self.max_position_change_per_second * time_diff
+                previous_target = self.previous_position_targets.get(finger_name, 0.0)
+                
+                # Apply speed limit to position changes (both opening and closing)
+                limited_target = position_target
+                if abs(position_target - previous_target) > max_change:
+                    # Determine direction of movement (positive = closing, negative = opening)
+                    direction = 1 if position_target > previous_target else -1
+                    # Apply limit
+                    limited_target = previous_target + (direction * max_change)
+                    logger.debug(f"{finger_name} speed limited: {previous_target:.1f}° → {limited_target:.1f}° "
+                                f"(requested: {position_target:.1f}°, max change: {max_change:.1f}°)")
+                
+                # Store target and time for next calculation
+                self.previous_position_targets[finger_name] = limited_target
+                self.previous_target_time[finger_name] = current_time
+                
+                # Apply the controlled movement
                 if state == FingerState.IDLE or state == FingerState.APPROACH:
-                    # Position control with open hand
+                    # Position control with open hand - always move at full speed to open
                     self.motors.set_position(finger_name, 0.0)
+                    # Update previous target to match what was commanded
+                    self.previous_position_targets[finger_name] = 0.0
                     
                 elif state == FingerState.PROPORTIONAL:
-                    # Position control with proportional position
-                    self.motors.set_position(finger_name, position_target)
+                    # Position control with speed-limited proportional position
+                    self.motors.set_position(finger_name, limited_target)
                     
                 elif state == FingerState.CONTACT:
-                    # Torque control
-                    self.motors.set_torque(finger_name, torque_target)
+                    # Apply position limit even in torque control mode
+                    if position <= max_angle:
+                        # Torque control - normal operation
+                        self.motors.set_torque(finger_name, torque_target)
+                    else:
+                        # Switch to position control to enforce limit
+                        logger.debug(f"{finger_name} in CONTACT but exceeding max angle, limiting position")
+                        self.motors.set_position(finger_name, max_angle)
             except Exception as e:
                 logger.error(f"Error applying control to {finger_name}: {e}")
                 # Try to set to safe position
@@ -452,6 +607,7 @@ class ProximityController:
                 "sensor_status": status,
                 "position": position,
                 "position_target": position_target,
+                "limited_target": limited_target if 'limited_target' in locals() else position_target,
                 "current": current,
                 "torque_target": torque_target,
                 "current_derivative": current_derivative,
@@ -460,7 +616,12 @@ class ProximityController:
                 "consecutive_below_approach": consecutive_below_approach,
                 "consecutive_below_contact": consecutive_below_contact,
                 "time_in_state": time_in_state,
-                "enforced_timing": enforce_timing if 'enforce_timing' in locals() else False
+                "enforced_timing": enforce_timing if 'enforce_timing' in locals() else False,
+                "substituted_from": substituted_from,
+                "sensors": {
+                    "primary": primary_sensor,
+                    "secondary": secondary_sensor
+                }
             }
             
         except Exception as e:
@@ -477,6 +638,30 @@ class ProximityController:
                 "torque_target": 0.0,
                 "current_derivative": 0.0
             }
+    
+    def _get_finger_sensors(self, finger_name):
+        """
+        Get all proximity sensors associated with a finger.
+        
+        Args:
+            finger_name: Name of the finger (e.g., "Thumb", "Index")
+            
+        Returns:
+            Dictionary with primary and secondary sensors for the finger
+        """
+        result = {'primary': None, 'secondary': None}
+        
+        # Find the primary (MCP) sensor for this finger
+        for sensor, finger in self.finger_mapping.items():
+            if finger == finger_name and sensor.endswith('1'):  # MCP sensors end with 1
+                result['primary'] = sensor
+                # Find the corresponding secondary (PIP) sensor
+                pip_sensor = sensor[:-1] + '2'  # Replace '1' with '2'
+                if pip_sensor in self.proximity.sensor_names:
+                    result['secondary'] = pip_sensor
+                break
+        
+        return result
     
     def _update_hand_state(self, finger_states):
         """Update hand state machine based on finger states"""
@@ -891,6 +1076,10 @@ class ProximityController:
             if self.startup_time is not None:
                 time_since_startup = time.time() - self.startup_time
                 startup_protection_active = time_since_startup < self.startup_delay_seconds
+                
+            # Update sensor analysis collection duration if active
+            if self.sensor_analysis['collection_start'] is not None:
+                self.sensor_analysis['collection_duration'] = time.time() - self.sensor_analysis['collection_start']
             
             # Get state transition timing information
             state_timing = {}
@@ -940,6 +1129,11 @@ class ProximityController:
                 "thresholds": {
                     "approach": self.approach_threshold,
                     "contact": self.contact_threshold
+                },
+                "sensor_analysis": {
+                    "active": self.sensor_analysis['collection_start'] is not None,
+                    "duration": self.sensor_analysis['collection_duration'],
+                    "sample_counts": {finger: len(data) for finger, data in self.sensor_analysis['mcp_readings'].items()}
                 }
             }
             
@@ -964,6 +1158,141 @@ class ProximityController:
                 "faults": self.fault_status,
                 "status": "ERROR"
             }
+
+    def start_sensor_analysis(self):
+        """
+        Start collecting data for MCP vs PIP sensor analysis.
+        This will reset any previous data collection.
+        """
+        # Reset analysis data
+        for finger_name in self.finger_mapping.values():
+            sensors = self._get_finger_sensors(finger_name)
+            if sensors['primary'] and sensors['secondary']:
+                self.sensor_analysis['mcp_readings'][finger_name] = []
+                self.sensor_analysis['pip_readings'][finger_name] = []
+                self.sensor_analysis['mcp_pip_diff'][finger_name] = []
+        
+        # Mark start time
+        self.sensor_analysis['collection_start'] = time.time()
+        self.sensor_analysis['collection_duration'] = 0
+        logger.info("Started MCP vs PIP sensor analysis data collection")
+    
+    def stop_sensor_analysis(self):
+        """
+        Stop collecting data for MCP vs PIP sensor analysis.
+        """
+        if self.sensor_analysis['collection_start'] is not None:
+            self.sensor_analysis['collection_duration'] = time.time() - self.sensor_analysis['collection_start']
+            logger.info(f"Stopped MCP vs PIP sensor analysis after {self.sensor_analysis['collection_duration']:.1f} seconds")
+        self.sensor_analysis['collection_start'] = None
+    
+    def get_sensor_analysis_report(self):
+        """
+        Generate a detailed report comparing MCP and PIP sensor behaviors.
+        
+        Returns:
+            Dictionary with analysis results
+        """
+        report = {
+            'collection_time': self.sensor_analysis['collection_duration'],
+            'sample_counts': {},
+            'mcp_stats': {},
+            'pip_stats': {},
+            'difference_stats': {},
+            'correlations': {}
+        }
+        
+        # Only analyze fingers with data
+        for finger_name, mcp_data in self.sensor_analysis['mcp_readings'].items():
+            pip_data = self.sensor_analysis['pip_readings'].get(finger_name, [])
+            diff_data = self.sensor_analysis['mcp_pip_diff'].get(finger_name, [])
+            
+            # Skip if not enough data
+            if len(mcp_data) < 10 or len(pip_data) < 10:
+                continue
+                
+            # Sample counts
+            report['sample_counts'][finger_name] = len(mcp_data)
+            
+            # Basic statistics
+            try:
+                # MCP stats
+                report['mcp_stats'][finger_name] = {
+                    'mean': sum(mcp_data) / len(mcp_data),
+                    'min': min(mcp_data),
+                    'max': max(mcp_data),
+                    'range': max(mcp_data) - min(mcp_data)
+                }
+                
+                # PIP stats
+                report['pip_stats'][finger_name] = {
+                    'mean': sum(pip_data) / len(pip_data),
+                    'min': min(pip_data),
+                    'max': max(pip_data),
+                    'range': max(pip_data) - min(pip_data)
+                }
+                
+                # Difference stats
+                report['difference_stats'][finger_name] = {
+                    'mean': sum(diff_data) / len(diff_data),
+                    'min': min(diff_data),
+                    'max': max(diff_data),
+                    'range': max(diff_data) - min(diff_data)
+                }
+                
+                # Calculate correlation coefficient if possible
+                if len(mcp_data) == len(pip_data) and len(mcp_data) > 1:
+                    try:
+                        # Use numpy if available for more accurate calculation
+                        import numpy as np
+                        correlation = np.corrcoef(mcp_data, pip_data)[0, 1]
+                        report['correlations'][finger_name] = correlation
+                    except (ImportError, Exception):
+                        # Fall back to basic correlation calculation
+                        n = len(mcp_data)
+                        mean_mcp = sum(mcp_data) / n
+                        mean_pip = sum(pip_data) / n
+                        
+                        # Compute covariance and variances
+                        covariance = sum((mcp_data[i] - mean_mcp) * (pip_data[i] - mean_pip) for i in range(n)) / n
+                        var_mcp = sum((x - mean_mcp) ** 2 for x in mcp_data) / n
+                        var_pip = sum((x - mean_pip) ** 2 for x in pip_data) / n
+                        
+                        if var_mcp > 0 and var_pip > 0:
+                            correlation = covariance / ((var_mcp * var_pip) ** 0.5)
+                            report['correlations'][finger_name] = correlation
+                        else:
+                            report['correlations'][finger_name] = 0.0
+            except Exception as e:
+                logger.error(f"Error calculating statistics for {finger_name}: {e}")
+        
+        # Generate summary of findings
+        findings = []
+        
+        # Find average differences between MCP and PIP
+        avg_differences = {}
+        for finger, stats in report['difference_stats'].items():
+            avg_differences[finger] = stats['mean']
+        
+        if avg_differences:
+            # Find fingers with biggest and smallest differences
+            max_diff_finger = max(avg_differences.items(), key=lambda x: abs(x[1]))
+            min_diff_finger = min(avg_differences.items(), key=lambda x: abs(x[1]))
+            
+            findings.append(f"The {max_diff_finger[0]} finger shows the largest average difference between MCP and PIP sensors: {max_diff_finger[1]:.1f}mm")
+            findings.append(f"The {min_diff_finger[0]} finger shows the smallest average difference between MCP and PIP sensors: {min_diff_finger[1]:.1f}mm")
+        
+        # Analyze correlations
+        if report['correlations']:
+            # Find strongest and weakest correlations
+            max_corr_finger = max(report['correlations'].items(), key=lambda x: abs(x[1]))
+            min_corr_finger = min(report['correlations'].items(), key=lambda x: abs(x[1]))
+            
+            findings.append(f"The {max_corr_finger[0]} finger shows the strongest correlation between MCP and PIP sensors: {max_corr_finger[1]:.2f}")
+            findings.append(f"The {min_corr_finger[0]} finger shows the weakest correlation between MCP and PIP sensors: {min_corr_finger[1]:.2f}")
+        
+        report['findings'] = findings
+        return report
 
 # Simple test code
 if __name__ == "__main__":
