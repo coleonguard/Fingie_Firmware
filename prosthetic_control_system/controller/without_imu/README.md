@@ -52,6 +52,18 @@ python -m prosthetic_control_system.controller.without_imu.run_controller --port
 
 # Enable/disable logging
 python -m prosthetic_control_system.controller.without_imu.run_controller --no-logging
+
+# Run in calibration mode (no motor movements)
+python -m prosthetic_control_system.controller.without_imu.run_controller --calibrate
+
+# Run sensor analysis to compare MCP vs PIP sensors
+python -m prosthetic_control_system.controller.without_imu.run_controller --analyze-sensors
+
+# Change visualization mode (minimal, basic, detailed)
+python -m prosthetic_control_system.controller.without_imu.run_controller --visualization detailed
+
+# Enable verbose debugging output
+python -m prosthetic_control_system.controller.without_imu.run_controller --debug
 ```
 
 ## Hardware Setup
@@ -61,6 +73,30 @@ python -m prosthetic_control_system.controller.without_imu.run_controller --no-l
 1. VL6180X proximity sensors connected to I2C multiplexers
 2. Multiplexers connected to the Raspberry Pi
 3. Ability Hand connected via USB
+
+### Hardware Recommendations for Reliable I2C
+
+For optimal reliability with the proximity sensors:
+
+1. **I2C Pull-up Resistors**: 
+   - Use 2.2kΩ-4.7kΩ pull-up resistors on SDA and SCL lines
+   - Weaker pull-ups can cause reliability issues under load
+
+2. **I2C Bus Speed**:
+   - Consider reducing the I2C clock speed for improved reliability
+   - Default is typically 100kHz; try 50kHz in high-interference environments
+
+3. **Power Supply**:
+   - Use separate power supplies for sensors and motors if possible
+   - Add decoupling capacitors (0.1μF) near each sensor's power pins
+
+4. **Cable Shielding**:
+   - Use shielded cables for I2C connections in high-noise environments
+   - Keep I2C cables away from motor wires and power cables
+
+5. **Ground Plane**:
+   - Ensure all components share a common ground reference
+   - Use a solid ground plane on PCBs for reduced noise
 
 ### Multiplexer Addresses
 
@@ -108,7 +144,48 @@ The controller includes several safety features to protect the Ability Hand:
 
 5. **Sensor Substitution**: If a proximity sensor fails, the system tries to substitute readings from neighboring sensors as defined in the fallback map
 
+6. **Three-Phase Control Approach**: The controller implements a robust three-phase control strategy to prevent I2C bus contention between sensor readings and motor control:
+
+   - **Phase 1: HARDWARE_RESET**
+     - Disables all multiplexers to reset the I2C bus state
+     - Adds a stabilization delay to let the I2C bus recover
+     - Ensures a clean state before sensor operations
+
+   - **Phase 2: SENSORS_ONLY**
+     - Reads all proximity sensors sequentially
+     - No motor control operations during this phase
+     - Caches sensor values with timestamps for later use
+     - Explicitly disables multiplexers after reading
+
+   - **Phase 3: MOTORS_ONLY**
+     - Uses cached sensor data to control motors
+     - No sensor reading during this phase
+     - Processes finger and hand state machines
+     - Controls motor positions and torques
+
+   This approach prevents I2C bus contention by ensuring that sensor reading and motor control operations never happen simultaneously, with explicit hardware reset between phases to maintain reliable communication.
+
 When faults occur, they are logged and displayed in the status output. The controller will try to maintain operation with degraded performance rather than failing completely.
+
+## Visualization Modes
+
+The controller offers three visualization modes for monitoring system status:
+
+1. **Minimal** (`--visualization minimal`)
+   - Shows only essential information
+   - Hand state and active fingers
+   - Minimal screen updates for constrained environments
+
+2. **Basic** (`--visualization basic`, default)
+   - Shows finger states with visual indicators (⚪, 🟡, 🟠, 🔴)
+   - Displays sensor distances, motor positions, and status
+   - Shows system performance metrics
+
+3. **Detailed** (`--visualization detailed`)
+   - Shows comprehensive debugging information
+   - Displays sensor status, fallback sources, and analysis
+   - Shows motion constraints and timing information
+   - Ideal for troubleshooting sensor issues
 
 ## Performance Tuning
 
@@ -117,6 +194,8 @@ If the controller performs sluggishly:
 2. Increase the approach threshold (e.g., `--approach 80`)
 3. Ensure I2C buses are not overloaded
 4. Check for sources of interference
+5. Try the minimal visualization mode (`--visualization minimal`)
+6. Disable sensor analysis if enabled
 
 ## Logs
 

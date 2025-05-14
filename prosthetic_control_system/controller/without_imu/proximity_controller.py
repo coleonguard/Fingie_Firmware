@@ -728,15 +728,43 @@ class ProximityController:
         """Update hand state machine based on finger states"""
         # Count fingers in each state
         state_counts = {state: 0 for state in FingerState}
+        
+        # Safely handle finger states with proper error checking
         for finger, data in finger_states.items():
-            state = FingerState[data["state"]]
-            state_counts[state] += 1
-            
-        # Create finger currents dictionary from finger_states data
-        finger_currents = {
-            finger: data["current"] 
-            for finger, data in finger_states.items()
-        }
+            try:
+                # Check if data is a dictionary and has the required keys
+                if isinstance(data, dict) and "state" in data:
+                    # Check if state is already an enum or needs conversion from string
+                    if isinstance(data["state"], FingerState):
+                        state = data["state"]
+                    else:
+                        # Convert string state to enum
+                        state = FingerState[data["state"]]
+                    
+                    # Count this state
+                    state_counts[state] += 1
+                else:
+                    # Default to IDLE for incomplete data
+                    logger.warning(f"Incomplete state data for {finger}, defaulting to IDLE")
+                    state_counts[FingerState.IDLE] += 1
+            except Exception as e:
+                # Handle any conversion errors
+                logger.error(f"Error processing finger state for {finger}: {e}")
+                # Default to IDLE for safety
+                state_counts[FingerState.IDLE] += 1
+        
+        # Create finger currents dictionary from finger_states data with error checking
+        finger_currents = {}
+        for finger, data in finger_states.items():
+            try:
+                if isinstance(data, dict) and "current" in data:
+                    finger_currents[finger] = data["current"]
+                else:
+                    # Default to 0.0 current for safety
+                    finger_currents[finger] = 0.0
+            except Exception as e:
+                logger.error(f"Error getting current for {finger}: {e}")
+                finger_currents[finger] = 0.0
         
         # Create simulated IMU parameters since we don't have IMU
         is_lowering = False        # Without IMU, assume never lowering
@@ -761,29 +789,94 @@ class ProximityController:
             # Keep current state in case of error
             return self.hand_fsm.state
     
+    def _reset_i2c_hardware(self):
+        """
+        Reset the I2C bus and multiplexers to a known good state.
+        
+        This helps recover from I2C bus contention and errors by:
+        1. Disabling all multiplexer channels
+        2. Adding a stabilization delay
+        3. Verifying multiplexer communication
+        """
+        try:
+            logger.debug("PHASE 1: HARDWARE_RESET - Resetting I2C bus")
+            
+            # Get unique multiplexer addresses
+            mux_addresses = set()
+            for mux, _, _ in self.proximity.sensors:
+                mux_addresses.add(mux)
+                
+            # Disable all channels on all multiplexers
+            for mux_address in mux_addresses:
+                try:
+                    # Write 0x00 to disable all channels
+                    with self.proximity.bus_lock:
+                        self.proximity.bus.write_byte(mux_address, 0x00)
+                        logger.debug(f"Disabled multiplexer at {hex(mux_address)}")
+                except Exception as e:
+                    logger.warning(f"Error disabling multiplexer at {hex(mux_address)}: {e}")
+            
+            # Add a longer stabilization delay (30ms)
+            time.sleep(0.030)
+            
+            # Verify multiplexer communication by reading back the register
+            # (some multiplexers support reading the channel register)
+            successful_muxes = 0
+            for mux_address in mux_addresses:
+                try:
+                    # Try to verify communication - will fail silently for muxes that don't support read
+                    with self.proximity.bus_lock:
+                        # Write 0x00 again for verification
+                        self.proximity.bus.write_byte(mux_address, 0x00)
+                        successful_muxes += 1
+                except Exception as e:
+                    logger.warning(f"Verification failed for multiplexer at {hex(mux_address)}: {e}")
+            
+            if successful_muxes == len(mux_addresses):
+                logger.debug(f"Successfully reset {successful_muxes} multiplexers")
+            else:
+                logger.warning(f"Only verified {successful_muxes}/{len(mux_addresses)} multiplexers")
+                
+            return True
+        except Exception as e:
+            logger.error(f"Error in I2C hardware reset: {e}")
+            return False
+    
     def _control_loop(self):
         """
-        Main control loop that runs at the specified rate with alternating phases.
+        Main control loop implementing a three-phase approach to prevent I2C contention.
         
-        This implements a two-phase approach:
-        1. Sensor Reading Phase - Reads all proximity sensors without motor commands
-        2. Motor Control Phase - Processes finger states and controls motors without sensor reads
+        Phase 1: HARDWARE_RESET - Reset I2C bus and multiplexers
+        Phase 2: SENSORS_ONLY - Read all proximity sensors without motor control
+        Phase 3: MOTORS_ONLY - Process control using cached sensor data
         
-        This prevents I2C bus contention between sensors and motors.
+        This ensures sensor reading and motor control never happen simultaneously,
+        and the I2C bus is explicitly reset between operations.
         """
         next_update_time = time.time()
         
-        # Phase tracking (alternates between sensor reading and motor control)
-        current_phase = "SENSORS"  # Start with sensor reading phase
+        # Phase tracking
+        current_phase = "HARDWARE_RESET"  # Start with hardware reset
         
-        # Cached sensor data to use during motor control phase
+        # Phase timings (adjust as needed)
+        phase_timing = {
+            "HARDWARE_RESET": 0.050,  # 50ms for hardware reset
+            "SENSORS_ONLY": 0.100,    # 100ms for sensor reading
+            "MOTORS_ONLY": 0.150      # 150ms for motor control
+        }
+        
+        # Cached sensor data for motor control phase
         sensor_cache = {}
         
-        # Cached finger data to use during sensor reading phase
-        finger_cache = {}
-        
-        # When was the last sensor reading phase completed
+        # Timestamp of last successful sensor reading
         last_sensor_read_time = 0
+        
+        # Cache validity period (200ms)
+        cache_validity_period = 0.200
+        
+        # Error tracking for adaptive timing
+        error_count = 0
+        max_errors = 5
         
         # Main control loop
         while self.running and not self.shutdown_event.is_set():
@@ -801,56 +894,155 @@ class ProximityController:
                     if self.is_shutting_down or self.shutdown_event.is_set():
                         break
                     
-                    # Phase 1: Read Sensors (without motor control)
-                    if current_phase == "SENSORS":
-                        # Log phase switch
-                        logger.debug("Control phase: SENSORS")
+                    # Phase 1: HARDWARE_RESET - Reset I2C bus and multiplexers
+                    if current_phase == "HARDWARE_RESET":
+                        logger.debug("PHASE 1: HARDWARE_RESET")
                         
-                        # Record the time of the sensor update
-                        last_sensor_read_time = time.time()
+                        # Reset I2C hardware
+                        reset_success = self._reset_i2c_hardware()
+                        
+                        # If reset failed, add a longer delay before retry
+                        if not reset_success:
+                            logger.warning("Hardware reset failed, adding extra delay")
+                            time.sleep(0.100)  # 100ms extra delay
+                            error_count += 1
+                        else:
+                            # Reset successful, proceed to next phase
+                            current_phase = "SENSORS_ONLY"
+                            # Set short buffer delay before sensor phase
+                            time.sleep(0.010)  # 10ms buffer
+                    
+                    # Phase 2: SENSORS_ONLY - Read all proximity sensors (no motor control)
+                    elif current_phase == "SENSORS_ONLY":
+                        logger.debug("PHASE 2: SENSORS_ONLY")
                         
                         # Clear sensor cache for fresh values
-                        sensor_cache = {}
+                        new_sensor_cache = {}
+                        read_errors = 0
                         
-                        # Read all finger sensors without processing control
+                        # Read all proximity sensors sequentially
                         for sensor_name in self.proximity.sensor_names:
                             try:
                                 # Skip if shutting down
                                 if self.is_shutting_down or self.shutdown_event.is_set():
                                     break
-                                    
-                                # Get sensor value
-                                value, status = self.proximity.get_sensor_value(
-                                    sensor_name, filtered=True, with_status=True
-                                )
                                 
-                                # Store in cache
-                                sensor_cache[sensor_name] = (value, status)
+                                # Find mux/channel for this sensor
+                                mux_address = None
+                                channel = None
+                                for mux, ch, name in self.proximity.sensors:
+                                    if name == sensor_name:
+                                        mux_address = mux
+                                        channel = ch
+                                        break
+                                
+                                if mux_address is None or channel is None:
+                                    logger.warning(f"Could not find mux/channel for {sensor_name}")
+                                    new_sensor_cache[sensor_name] = (None, "UNKNOWN")
+                                    continue
+                                
+                                # Select this channel explicitly
+                                try:
+                                    # Select channel with extra stabilization delay
+                                    with self.proximity.bus_lock:
+                                        self.proximity.bus.write_byte(mux_address, 1 << channel)
+                                        # 1ms delay for channel to stabilize
+                                        time.sleep(0.001)
+                                    
+                                    # Ensure sensor is initialized
+                                    if not self.proximity.init_done.get((mux_address, channel), False):
+                                        logger.debug(f"Initializing sensor {sensor_name}")
+                                        if self.proximity.initialize_vl6180x():
+                                            logger.info(f"Initialized sensor {sensor_name}")
+                                        self.proximity.init_done[(mux_address, channel)] = True
+                                    
+                                    # Read sensor value with timeout
+                                    value = None
+                                    status = "BAD"
+                                    
+                                    # Get sensor reading with timeout
+                                    read_timeout = time.time() + 0.050  # 50ms timeout
+                                    while time.time() < read_timeout:
+                                        try:
+                                            value = self.proximity.get_distance()
+                                            if value is not None:
+                                                status = "OK"
+                                                break
+                                            # Short delay between retries
+                                            time.sleep(0.002)
+                                        except Exception as e:
+                                            logger.debug(f"Error reading {sensor_name}: {e}")
+                                            time.sleep(0.005)  # Longer delay after error
+                                    
+                                    # Store in cache
+                                    new_sensor_cache[sensor_name] = (value, status)
+                                    
+                                    # Apply Kalman filtering for valid readings
+                                    if value is not None:
+                                        filtered_value = self.proximity.filters[sensor_name].update(value)
+                                        self.proximity.filtered_values[sensor_name] = filtered_value
+                                        self.proximity.raw_values[sensor_name] = value
+                                        self.proximity.status[sensor_name] = status
+                                    
+                                    # Add short delay between sensors
+                                    time.sleep(0.002)
+                                    
+                                except Exception as e:
+                                    logger.warning(f"Error accessing sensor {sensor_name}: {e}")
+                                    new_sensor_cache[sensor_name] = (None, "ERROR")
+                                    read_errors += 1
+                                
                             except Exception as e:
-                                logger.debug(f"Error reading sensor {sensor_name}: {e}")
-                                sensor_cache[sensor_name] = (None, "ERROR")
+                                logger.warning(f"Unhandled error reading sensor {sensor_name}: {e}")
+                                new_sensor_cache[sensor_name] = (None, "ERROR")
+                                read_errors += 1
                         
-                        # Switch phase
-                        current_phase = "MOTORS"
-                        logger.debug(f"Read {len(sensor_cache)} sensors, switching to MOTORS phase")
+                        # Disable all multiplexers after reading
+                        try:
+                            mux_addresses = set()
+                            for mux, _, _ in self.proximity.sensors:
+                                mux_addresses.add(mux)
+                                
+                            for mux_address in mux_addresses:
+                                with self.proximity.bus_lock:
+                                    self.proximity.bus.write_byte(mux_address, 0x00)
+                        except Exception as e:
+                            logger.warning(f"Error disabling multiplexers after reading: {e}")
                         
-                    # Phase 2: Process control using cached sensor data (without sensor reads)
-                    elif current_phase == "MOTORS":
-                        # Log phase switch
-                        logger.debug("Control phase: MOTORS")
+                        # If we got any valid readings, update the cache
+                        if len(new_sensor_cache) > 0:
+                            sensor_cache = new_sensor_cache
+                            last_sensor_read_time = time.time()
+                            logger.debug(f"Read {len(sensor_cache)} sensors, {read_errors} errors")
+                            
+                            # Decrease error count on success
+                            if read_errors == 0 and error_count > 0:
+                                error_count = max(0, error_count - 1)
+                        else:
+                            # All readings failed
+                            logger.warning("All sensor readings failed")
+                            error_count += 1
                         
-                        # Only proceed if we have sensor data
+                        # Proceed to motor control phase
+                        current_phase = "MOTORS_ONLY"
+                        
+                        # Add buffer delay before motor phase
+                        time.sleep(0.010)  # 10ms buffer
+                    
+                    # Phase 3: MOTORS_ONLY - Process control using cached sensor data
+                    elif current_phase == "MOTORS_ONLY":
+                        logger.debug("PHASE 3: MOTORS_ONLY")
+                        
+                        # Only proceed if we have valid sensor data
                         if not sensor_cache:
-                            logger.warning("No sensor data available for motor control phase")
-                            # Switch back to sensor phase
-                            current_phase = "SENSORS"
+                            logger.warning("No sensor data available for motor control")
+                            current_phase = "HARDWARE_RESET"
                             continue
                         
-                        # Check if sensor data is too old (> 200ms)
-                        if time.time() - last_sensor_read_time > 0.2:
-                            logger.warning("Sensor data is too old, refreshing...")
-                            # Switch back to sensor phase
-                            current_phase = "SENSORS"
+                        # Check if sensor data is too old
+                        if time.time() - last_sensor_read_time > cache_validity_period:
+                            logger.warning(f"Sensor data is {time.time() - last_sensor_read_time:.3f}s old (limit: {cache_validity_period:.3f}s)")
+                            current_phase = "HARDWARE_RESET"
                             continue
                         
                         # Process finger states using cached sensor data
@@ -868,17 +1060,18 @@ class ProximityController:
                                 sensor_name, finger_name, cached_value, cached_status
                             )
                         
-                        # Save finger data for future use
-                        finger_cache = finger_data
-                        
                         # Abort if shutdown detected during processing
                         if self.is_shutting_down or self.shutdown_event.is_set():
                             break
                         
                         # Update hand state
-                        hand_state = self._update_hand_state(finger_data)
+                        try:
+                            hand_state = self._update_hand_state(finger_data)
+                        except Exception as e:
+                            logger.error(f"Error updating hand state: {e}")
+                            hand_state = HandState.IDLE  # Default to IDLE for safety
                         
-                        # Detect faults (using cached sensor data)
+                        # Detect faults using cached sensor data
                         try:
                             # Count bad sensors using cached data
                             bad_sensors = 0
@@ -888,7 +1081,6 @@ class ProximityController:
                                 _, status = sensor_cache.get(sensor, (None, "BAD"))
                                 if status == "BAD":
                                     bad_sensors += 1
-                                    logger.debug(f"Sensor {sensor} is BAD (from cache)")
                             
                             # Set fault if more than 2 critical sensors are bad
                             if bad_sensors >= 2:
@@ -898,22 +1090,25 @@ class ProximityController:
                                 self.fault_status["sensor_failure"] = False
                         except Exception as e:
                             logger.warning(f"Error checking sensor status: {e}")
-                            # Don't change fault status if we can't check
                         
                         # Log data if not shutting down
                         if self.data_logger and not self.is_shutting_down:
                             try:
-                                # Create log data compatible with logger format using cached sensor values
-                                proximity_values = {name: value for name, (value, _) in sensor_cache.items()}
-                                proximity_status = {name: status for name, (_, status) in sensor_cache.items()}
+                                # Create log data with required type checking
+                                proximity_values = {}
+                                proximity_status = {}
+                                
+                                for name, (value, status) in sensor_cache.items():
+                                    proximity_values[name] = value
+                                    proximity_status[name] = status
                                 
                                 log_data = {
                                     "timestamp": time.time(),
-                                    "hand_state": hand_state.name,
+                                    "hand_state": hand_state.name if hasattr(hand_state, 'name') else str(hand_state),
                                     "fingers": finger_data,
                                     "proximity": {
                                         "raw": proximity_values,
-                                        "filtered": proximity_values,
+                                        "filtered": proximity_values,  # Same as raw for now
                                         "status": proximity_status
                                     },
                                     "imu": {
@@ -924,14 +1119,15 @@ class ProximityController:
                                     },
                                     "faults": self.fault_status
                                 }
-                                # Use the correct method name (log_data instead of log)
                                 self.data_logger.log_data(log_data)
                             except Exception as e:
                                 logger.error(f"Error logging data: {e}")
                         
-                        # Switch phase
-                        current_phase = "SENSORS"
-                        logger.debug("Processed motor control, switching to SENSORS phase")
+                        # Back to hardware reset for next cycle
+                        current_phase = "HARDWARE_RESET"
+                        
+                        # Add buffer delay after motor phase
+                        time.sleep(0.010)  # 10ms buffer
                     
                     # Update timing stats
                     end_time = time.time()
@@ -953,13 +1149,26 @@ class ProximityController:
                     # Update max cycle time
                     self.max_cycle_time = max(self.max_cycle_time, cycle_time)
                     
-                    # Calculate next update time - we run at 2x the control rate to account for two phases
-                    next_update_time = start_time + (self.control_interval / 2)
+                    # Adjust timing based on error rate
+                    phase_delay = phase_timing.get(current_phase, 0.050)
+                    
+                    # Add exponential backoff if we're getting errors
+                    if error_count > 0:
+                        # Increase delay exponentially with error count
+                        backoff_factor = min(4.0, 1.0 + (error_count / max_errors) * 3.0)
+                        phase_delay *= backoff_factor
+                        
+                        if error_count >= max_errors:
+                            logger.warning(f"High error rate ({error_count} errors), using maximum backoff")
+                    
+                    # Calculate next update time
+                    next_update_time = start_time + phase_delay
                     
                 except Exception as e:
                     logger.error(f"Error in control loop: {e}")
                     # Make sure we don't get stuck
-                    next_update_time = time.time() + self.control_interval
+                    next_update_time = time.time() + 0.100  # 100ms safety delay
+                    error_count += 1
             
             # Check shutdown before sleeping
             if self.is_shutting_down or self.shutdown_event.is_set():
@@ -973,6 +1182,12 @@ class ProximityController:
                 break
         
         logger.info("Control loop exited")
+        
+        # Try to reset I2C hardware one more time on exit for clean shutdown
+        try:
+            self._reset_i2c_hardware()
+        except Exception:
+            pass
     
     def start(self):
         """Start all subsystems and the control loop"""
