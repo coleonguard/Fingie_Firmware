@@ -93,31 +93,40 @@ def _display_basic_status(status, args, controller=None):
     
     # Print finger information in a table format
     print("Finger Status:")
-    print("-" * 75)
-    print(f"{'Finger':<10}{'State':<15}{'Distance (mm)':<15}{'Position (°)':<12}{'Fallback/Source':<15}")
-    print("-" * 75)
+    print("-" * 85)
+    print(f"{'Finger':<10}{'State':<15}{'Distance (mm)':<15}{'Position (°)':<12}{'Proximity':<15}{'Fallback':<15}")
+    print("-" * 85)
     
     # Order fingers for consistent display
     finger_order = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
     
     # Try to access finger substitution info
-    finger_source = {}
+    finger_fallbacks = {}
     if controller and hasattr(controller, 'finger_substitutions'):
         for finger, sub_from in controller.finger_substitutions.items():
             if sub_from is not None:
-                finger_source[finger] = f"From {sub_from}"
+                finger_fallbacks[finger] = f"From {sub_from}"
     
     for finger in finger_order:
         if finger in finger_states:
             state = finger_states[finger]
             
             # Find the corresponding distance for this finger
-            distance = "N/A"
+            filtered_distance = "N/A"
+            raw_proximity = "N/A"
             sensor_name = None
-            for sensor, value in proximity.items():
+            
+            # Get MCP sensor name for this finger
+            for sensor in proximity.keys():
                 if sensor.startswith(finger[0]) and sensor.endswith('1'):  # MCP sensors
-                    distance = f"{value:.1f}" if value is not None else "N/A"
                     sensor_name = sensor
+                    break
+            
+            # Get raw proximity value if available
+            if sensor_name and sensor_name in proximity:
+                value = proximity[sensor_name]
+                raw_proximity = f"{value:.1f}" if value is not None else "N/A"
+                filtered_distance = raw_proximity  # For now, same as raw
             
             position = positions.get(finger, 0.0)
             
@@ -130,11 +139,11 @@ def _display_basic_status(status, args, controller=None):
             }.get(state, '⚪')
             
             # Add fallback information
-            fallback_info = finger_source.get(finger, sensor_name or "")
+            fallback_info = finger_fallbacks.get(finger, "")
             
-            print(f"{finger:<10}{state_emoji} {state:<13}{distance:<15}{position:.1f}°{fallback_info:<15}")
+            print(f"{finger:<10}{state_emoji} {state:<13}{filtered_distance:<15}{position:.1f}°{raw_proximity:<15}{fallback_info:<15}")
     
-    print("-" * 75)
+    print("-" * 85)
     
     # Display cycle time information
     cycle_time = status['cycle_time']

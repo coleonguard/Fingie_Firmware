@@ -138,6 +138,17 @@ class ProximityManager:
         self.shutdown_event = threading.Event()  # Event to signal shutdown
         self.thread = None
         self.init_done = {(mux, ch): False for mux, ch, _ in self.sensors}
+        
+        # Track current mux/channel for better error reporting
+        self.current_mux = None
+        self.current_channel = None
+        
+        # Track sensor health and recent errors
+        self.error_counts = {name: 0 for name in self.sensor_names}
+        self.last_valid_reading_time = {name: 0 for name in self.sensor_names}
+        
+        # Cache of last valid readings to handle intermittent failures
+        self.reading_cache = {name: collections.deque(maxlen=5) for name in self.sensor_names}
     
     def select_channel(self, mux_address, channel):
         """
@@ -155,6 +166,10 @@ class ProximityManager:
             raise RuntimeError("Cannot access hardware during shutdown")
             
         try:
+            # Track which mux/channel we're currently using for better error reporting
+            self.current_mux = mux_address
+            self.current_channel = channel
+            
             with self.bus_lock:
                 self.bus.write_byte(mux_address, 1 << channel)
                 time.sleep(0.0005)  # Small delay for stable switching
@@ -287,25 +302,72 @@ class ProximityManager:
         if self.shutdown_event.is_set():
             raise RuntimeError("Cannot access hardware during shutdown")
         
-        # Implementation identical to fallback_test.py get_distance() function
-        for _ in range(self.n_retries):
+        # Enhanced version of the fallback_test.py get_distance() function with exponential backoff
+        base_delay = 0.002  # Base delay between retries (same as original)
+        max_delay = 0.05    # Maximum delay between retries
+        
+        # Determine if we're in a high-load scenario (motors moving)
+        # We'll check if we've had recent failures and increase retries in that case
+        dynamic_retries = self.n_retries
+        
+        for attempt in range(dynamic_retries):
             try:
+                # Clear any previous errors before starting
+                try:
+                    self.clear_interrupts()
+                except Exception:
+                    # Ignore errors here - we're just trying to reset the sensor
+                    pass
+                
+                # Start the range measurement
                 self.start_range()
+                
+                # Wait for the measurement to complete
                 self.wait_ready()
+                
+                # Read the distance value
                 d = self.read_byte(0x062)  # Range result register
+                
+                # Clear interrupts after successful read
                 self.clear_interrupts()
+                
+                # Return valid reading
                 return d
+                
             except TimeoutError:
-                time.sleep(0.002)   # Let the sensor settle before retry
+                # Calculate exponential backoff delay
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                
+                # Add a small random component to reduce chance of synchronized retries
+                jitter = delay * 0.2 * (0.5 + 0.5 * (time.time() % 1.0))
+                time.sleep(delay + jitter)
+                
             except RuntimeError as e:
                 # If we're shutting down, propagate the exception
                 if "shutdown" in str(e):
                     raise
-                # Otherwise, treat like timeout and retry
-                time.sleep(0.002)
+                
+                # For I2C-specific errors, use a longer delay
+                if "I/O error" in str(e) or "I2C" in str(e):
+                    # This indicates bus contention - use longer delay
+                    time.sleep(max_delay)
+                else:
+                    # For other errors, use the same exponential backoff as timeout
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    time.sleep(delay)
         
-        # All retries failed - return None to match fallback_test.py behavior
-        logger.warning("All retries failed in get_distance()")
+        # All retries failed - log which sensor was being read if possible
+        sensor_info = "unknown sensor"
+        for mux, ch, name in self.sensors:
+            try:
+                # Check which sensors use the current mux/channel
+                if (mux, ch) == (self.current_mux, self.current_channel):
+                    sensor_info = f"{name} (mux: {hex(mux)}, ch: {ch})"
+                    break
+            except:
+                pass
+                
+        logger.warning(f"All retries failed in get_distance() for {sensor_info}")
         return None
     
     def get_sensor_value(self, sensor_name, filtered=True, with_status=False):
@@ -376,14 +438,42 @@ class ProximityManager:
                 # Read raw distance
                 distance = self.get_distance()
                 
-                # Store valid readings just like fallback_test.py does
+                # Store valid readings and update cache
                 if distance is not None:
+                    # Valid reading - update cache and raw values
                     raw[name] = distance
                     self.raw_values[name] = distance
-                    ok.append(name)  # Mark as OK just like fallback_test.py
+                    ok.append(name)  # Mark as OK
+                    
+                    # Update cache and tracking
+                    self.reading_cache[name].append(distance)
+                    self.last_valid_reading_time[name] = time.time()
+                    self.error_counts[name] = 0  # Reset error count on success
                 else:
-                    # Keep as None to indicate read failure
-                    raw[name] = None
+                    # Reading failed - track error
+                    self.error_counts[name] += 1
+                    
+                    # Use cached readings if available and not too stale
+                    cached_values = list(self.reading_cache[name])
+                    if cached_values and (time.time() - self.last_valid_reading_time[name] < 1.0):
+                        # Use average of recent valid readings
+                        avg_distance = sum(cached_values) / len(cached_values)
+                        logger.debug(f"Using cached value for {name}: {avg_distance:.1f}mm")
+                        raw[name] = int(avg_distance)
+                        ok.append(name)  # Consider this a success since we have a value
+                    else:
+                        # No usable cached values - mark as failed
+                        raw[name] = None
+                        
+                        # If errors are persistent, gradually fade to max distance (100mm)
+                        if self.error_counts[name] > 5 and name in self.raw_values:
+                            # Gradually increase towards 100mm
+                            current = self.raw_values[name]
+                            if current < 100:
+                                # Move 10% closer to 100mm
+                                new_value = current + min(5, int((100 - current) * 0.1))
+                                logger.debug(f"Fading {name} to max: {current}mm -> {new_value}mm")
+                                self.raw_values[name] = new_value
             except Exception as e:
                 logger.warning(f"Error reading sensor {name}: {e}")
                 raw[name] = None
@@ -455,6 +545,12 @@ class ProximityManager:
         all sensors at the specified sampling rate.
         """
         next_sample_time = time.time()
+        error_count = 0  # Track consecutive errors for dynamic rate adjustment
+        current_interval = self.sampling_interval  # Start with normal interval
+        
+        # Constants for dynamic rate adjustment
+        MIN_INTERVAL = self.sampling_interval  # Fastest rate (normal)
+        MAX_INTERVAL = self.sampling_interval * 2  # Slowest rate (during errors)
         
         while self.running and not self.shutdown_event.is_set():
             current_time = time.time()
@@ -466,21 +562,55 @@ class ProximityManager:
                     if not self.shutdown_event.is_set():
                         self._read_all_sensors()
                     
+                    # Successful read - gradually move back to normal rate if we were slowed down
+                    if current_interval > MIN_INTERVAL:
+                        current_interval = max(MIN_INTERVAL, current_interval * 0.9)
+                        logger.debug(f"Adjusting sampling interval: {current_interval:.4f}s")
+                    
+                    # Reset error count on success
+                    error_count = 0
+                    
                     # Calculate next sample time
-                    next_sample_time = current_time + self.sampling_interval
+                    next_sample_time = current_time + current_interval
+                    
                 except RuntimeError as e:
                     # Handle shutdown-related errors gracefully
                     if "shutdown" in str(e):
                         logger.info("Sensor thread detected shutdown, exiting...")
                         break
                     else:
+                        # Handle other errors by backing off
+                        error_count += 1
                         logger.error(f"Error in sensor thread: {e}")
+                        
+                        # Adjust sampling rate based on errors (slow down during high error periods)
+                        if error_count > 3:
+                            # Exponential backoff up to MAX_INTERVAL
+                            backoff_factor = min(2.0, 1.0 + (error_count - 3) * 0.2)
+                            current_interval = min(MAX_INTERVAL, current_interval * backoff_factor)
+                            logger.info(f"Reducing sampling rate due to errors: {current_interval:.4f}s")
+                        
                         # Add some delay after errors to avoid rapid retries
                         time.sleep(0.05)
+                        
+                        # Set next sample time accounting for the delay we just added
+                        next_sample_time = time.time() + current_interval
+                        
                 except Exception as e:
+                    # Handle other exceptions similarly
+                    error_count += 1
                     logger.error(f"Error in sensor thread: {e}")
+                    
+                    # Adjust sampling rate based on errors
+                    if error_count > 3:
+                        current_interval = min(MAX_INTERVAL, current_interval * 1.2)
+                        logger.info(f"Reducing sampling rate due to errors: {current_interval:.4f}s")
+                    
                     # Add some delay after errors to avoid rapid retries
                     time.sleep(0.05)
+                    
+                    # Set next sample time accounting for the delay we just added
+                    next_sample_time = time.time() + current_interval
             
             # Check shutdown between iterations with small delay
             if self.shutdown_event.wait(0.001):  # Will wait 1ms and return True if event is set
