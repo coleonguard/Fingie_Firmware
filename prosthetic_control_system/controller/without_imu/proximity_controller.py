@@ -33,7 +33,7 @@ from prosthetic_control_system.hand.motor_interface import MotorInterface, Contr
 from prosthetic_control_system.hand.ability_hand_interface import AbilityHandInterface
 from prosthetic_control_system.controller.state_machines import FingerState, HandState, FingerFSM, HandFSM
 from prosthetic_control_system.utils.logger import DataLogger
-from prosthetic_control_system.controller.without_imu.config import DEFAULT_CONFIG, FINGER_MAPPING, MCP_SENSORS
+from prosthetic_control_system.controller.without_imu.config import DEFAULT_CONFIG, FINGER_MAPPING, MCP_SENSORS, FINGER_FALLBACK_MAP
 
 # Mock IMU MotionState for compatibility with existing code
 class MotionState(Enum):

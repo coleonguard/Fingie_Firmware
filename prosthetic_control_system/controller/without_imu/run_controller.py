@@ -76,8 +76,8 @@ def _display_basic_status(status, args):
     # Get status data
     hand_state = status['hand']['hand_state']
     finger_states = status['hand']['finger_states']
-    proximity = status['proximity']
-    positions = status['positions']
+    proximity = status.get('proximity', {})
+    positions = status.get('positions', {})
     
     # Header with hand state
     emoji_map = {
@@ -131,15 +131,15 @@ def _display_basic_status(status, args):
     if args.calibrate:
         print("\n⚙️  CALIBRATION MODE ACTIVE - Motor movements disabled")
     
-    if args.analyze_sensors:
+    if args.analyze_sensors and 'debug' in status and 'sensor_analysis' in status['debug']:
         analysis_data = status['debug']['sensor_analysis']
-        duration = analysis_data['duration']
-        active = analysis_data['active']
+        duration = analysis_data.get('duration', 0)
+        active = analysis_data.get('active', False)
         if active:
             print(f"\n📊 Sensor analysis running: {duration:.1f}s elapsed")
             
             # Show sample counts if available
-            samples = analysis_data['sample_counts']
+            samples = analysis_data.get('sample_counts', {})
             if samples:
                 print(f"   Samples collected: {', '.join([f'{f}:{c}' for f, c in samples.items()])}")
 
@@ -148,26 +148,40 @@ def _display_detailed_status(status, args, controller=None):
     # First show the basic status
     _display_basic_status(status, args)
     
-    # Get debug info
+    # Get debug info if available
+    if 'debug' not in status:
+        print("\nDebug information not available.")
+        return
+    
     debug = status['debug']
     
     # Show startup protection status if applicable
-    startup = debug['startup']
-    if startup['time_since_startup'] < 5.0:  # Only show during first 5 seconds
-        print("\nStartup Protection:")
-        active = startup['startup_protection_active']
-        emoji = '🔒' if active else '🔓'
-        print(f"{emoji} {'Active' if active else 'Inactive'} - {startup['time_since_startup']:.1f}s since startup")
+    if 'startup' in debug:
+        startup = debug['startup']
+        if startup.get('time_since_startup', 0) < 5.0:  # Only show during first 5 seconds
+            print("\nStartup Protection:")
+            active = startup.get('startup_protection_active', False)
+            emoji = '🔒' if active else '🔓'
+            print(f"{emoji} {'Active' if active else 'Inactive'} - {startup.get('time_since_startup', 0):.1f}s since startup")
     
     # Show hysteresis information
     print("\nHysteresis Status:")
     print("-" * 52)
-    awaiting_reset = debug['hysteresis']['awaiting_reset']
-    reset_threshold = debug['hysteresis']['reset_threshold']
     
-    for finger, waiting in awaiting_reset.items():
-        status_text = f"🔒 Waiting for reset ({reset_threshold}mm)" if waiting else "🔓 Ready for new triggers"
-        print(f"{finger:<10}: {status_text}")
+    # Default values in case data is missing
+    awaiting_reset = {}
+    reset_threshold = 40
+    
+    if 'hysteresis' in debug:
+        awaiting_reset = debug['hysteresis'].get('awaiting_reset', {})
+        reset_threshold = debug['hysteresis'].get('reset_threshold', 40)
+    
+    if awaiting_reset:
+        for finger, waiting in awaiting_reset.items():
+            status_text = f"🔒 Waiting for reset ({reset_threshold}mm)" if waiting else "🔓 Ready for new triggers"
+            print(f"{finger:<10}: {status_text}")
+    else:
+        print("No hysteresis information available")
     
     # Show sensor fallback/substitution if being reported in debug info
     try:
@@ -190,9 +204,12 @@ def _display_detailed_status(status, args, controller=None):
     
     # Show timing constraints
     print("\nTiming Constraints:")
-    min_times = debug['timing']['min_times']
-    print(f"Min time in states: IDLE={min_times['idle']}s, APPROACH={min_times['approach']}s, " +
-          f"PROPORTIONAL={min_times['proportional']}s, CONTACT={min_times['contact']}s")
+    if 'timing' in debug and 'min_times' in debug['timing']:
+        min_times = debug['timing']['min_times']
+        print(f"Min time in states: IDLE={min_times.get('idle', 0)}s, APPROACH={min_times.get('approach', 0)}s, " +
+              f"PROPORTIONAL={min_times.get('proportional', 0)}s, CONTACT={min_times.get('contact', 0)}s")
+    else:
+        print("Timing constraints information not available")
     
     # Show motion constraints
     print("\nMotion Constraints:")
@@ -213,10 +230,10 @@ def _display_detailed_status(status, args, controller=None):
             print(f"{finger:<10}: Currently {angle:.1f}° / Max {max_angle}°")
     
     # Show sensor analysis data if active
-    if args.analyze_sensors:
+    if args.analyze_sensors and 'sensor_analysis' in debug:
         analysis_data = debug['sensor_analysis']
-        duration = analysis_data['duration']
-        active = analysis_data['active']
+        duration = analysis_data.get('duration', 0)
+        active = analysis_data.get('active', False)
         
         print("\n📊 Sensor Analysis:")
         print("-" * 52)
