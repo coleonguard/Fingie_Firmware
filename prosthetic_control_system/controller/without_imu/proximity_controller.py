@@ -104,6 +104,9 @@ class ProximityController:
         if verbose_logging:
             logger.setLevel(logging.DEBUG)
             logger.debug("Verbose logging enabled")
+        
+        # Finger mapping from proximity sensors to motors - Define this early so we can use it
+        self.finger_mapping = FINGER_MAPPING
             
         # Motor movement speed control
         self.max_position_change_per_second = max_position_change_per_second
@@ -126,14 +129,8 @@ class ProximityController:
             'collection_duration': 0   # How long analysis has been running
         }
         
-        # Initialize analysis for each finger
-        for finger_name in self.finger_mapping.values():
-            sensors = self._get_finger_sensors(finger_name)
-            if sensors['primary'] and sensors['secondary']:
-                # Only track fingers with both sensors
-                self.sensor_analysis['mcp_readings'][finger_name] = []
-                self.sensor_analysis['pip_readings'][finger_name] = []
-                self.sensor_analysis['mcp_pip_diff'][finger_name] = []
+        # Initialize analysis for each finger - we'll populate this after sensors are initialized
+        # Don't try to use _get_finger_sensors here as it depends on proximity manager which isn't set up yet
         
         # Set up logging
         if log_dir is None:
@@ -179,6 +176,18 @@ class ProximityController:
                 contact_threshold=self.contact_threshold
             )
         
+        # Initialize sensor analysis data now that proximity manager is set up
+        for finger_name in self.finger_mapping.values():
+            try:
+                sensors = self._get_finger_sensors(finger_name)
+                if sensors['primary'] and sensors['secondary']:
+                    # Only track fingers with both sensors
+                    self.sensor_analysis['mcp_readings'][finger_name] = []
+                    self.sensor_analysis['pip_readings'][finger_name] = []
+                    self.sensor_analysis['mcp_pip_diff'][finger_name] = []
+            except Exception as e:
+                logger.debug(f"Could not initialize sensor analysis for {finger_name}: {e}")
+        
         # Initialize motor interface
         if motor_interface_kwargs is None:
             motor_interface_kwargs = {}
@@ -196,9 +205,6 @@ class ProximityController:
                 logger.error(f"Error initializing Ability Hand interface: {e}")
                 logger.info("Falling back to simulated motors")
                 self.motors = SimulatedMotorInterface(**motor_interface_kwargs)
-        
-        # Finger mapping from proximity sensors to motors
-        self.finger_mapping = FINGER_MAPPING
         
         # Create finger FSMs
         logger.info("Initializing finger state machines...")
