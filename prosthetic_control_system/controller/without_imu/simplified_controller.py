@@ -202,17 +202,28 @@ class SimplifiedController:
         self.max_position_change_per_second = max_position_change_per_second
         self.max_finger_angles = max_finger_angles
         
-        # Initialize motor interface
+        # Get motor parameters
         motor_interface_kwargs = motor_interface_kwargs or {}
-        if use_simulated_motors:
-            logger.info("Using simulated motor interface")
-            self.motors = SimulatedMotorInterface(**motor_interface_kwargs)
-        else:
-            logger.info("Using Ability Hand motor interface")
-            self.motors = MotorInterface(**motor_interface_kwargs)
+        port = motor_interface_kwargs.get('port')
         
-        # Create Ability Hand interface
-        self.hand = AbilityHandInterface(self.motors)
+        # Create Ability Hand interface directly
+        logger.info(f"Creating {'simulated' if use_simulated_motors else 'real'} Ability Hand interface")
+        
+        if use_simulated_motors:
+            # For simulated mode, pass None as port to force simulation
+            self.hand = AbilityHandInterface(
+                control_rate=control_rate,
+                port=None
+            )
+        else:
+            # For real hardware
+            self.hand = AbilityHandInterface(
+                control_rate=control_rate,
+                port=port
+            )
+        
+        # Use the hand interface for motor control
+        self.motors = self.hand
         
         # Store control rate for calculations
         self.control_rate = control_rate  # Hz
@@ -347,6 +358,8 @@ class SimplifiedController:
             
             # Start hand interface
             self.hand.connect()
+            
+            # Motors already initialized in __init__
             
             # Set running flag
             self.running = True
