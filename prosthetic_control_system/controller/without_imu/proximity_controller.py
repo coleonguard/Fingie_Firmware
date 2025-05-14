@@ -322,10 +322,13 @@ class ProximityController:
                 status = "SEC" # Mark as coming from secondary sensor
                 logger.debug(f"Using secondary sensor {secondary_sensor} with value {distance}mm")
             
-            # Cross-finger fallback - if both sensors are bad, try another finger
-            if status == "BAD" or distance is None:
+            # Cross-finger fallback - if both sensors are bad OR if all readings are 100mm (effectively nothing detected)
+            use_fallback = (status == "BAD" or distance is None or (distance >= 99 and secondary_distance is not None and secondary_distance >= 99))
+            
+            if use_fallback:
                 # Get the fallback mapping for this finger
                 fallback_fingers = FINGER_FALLBACK_MAP.get(finger_name, [])
+                logger.debug(f"Trying fallback for {finger_name} ({distance}mm): {fallback_fingers}")
                 
                 for fallback_finger in fallback_fingers:
                     # Skip if we're already using this as a fallback
@@ -342,11 +345,12 @@ class ProximityController:
                         fb_distance, fb_status = self.proximity.get_sensor_value(
                             fallback_primary, filtered=True, with_status=True
                         )
-                        if fb_status != "BAD" and fb_distance is not None:
+                        # Only use fallback if it's a valid reading AND not at the max distance
+                        if fb_status != "BAD" and fb_distance is not None and fb_distance < 99:
                             distance = fb_distance
                             status = "FB"  # Mark as coming from fallback finger
                             substituted_from = fallback_finger
-                            logger.info(f"FINGER FALLBACK: Using {fallback_finger} ({fallback_primary}) for {finger_name}")
+                            logger.info(f"FINGER FALLBACK: Using {fallback_finger} ({fallback_primary}) for {finger_name} - value: {fb_distance}mm")
                             break
                     
                     # Try secondary sensor of fallback finger if primary failed
@@ -355,11 +359,12 @@ class ProximityController:
                         fb_distance, fb_status = self.proximity.get_sensor_value(
                             fallback_secondary, filtered=True, with_status=True
                         )
-                        if fb_status != "BAD" and fb_distance is not None:
+                        # Only use fallback if it's a valid reading AND not at the max distance
+                        if fb_status != "BAD" and fb_distance is not None and fb_distance < 99:
                             distance = fb_distance
                             status = "FB"  # Mark as coming from fallback finger
                             substituted_from = fallback_finger
-                            logger.info(f"FINGER FALLBACK: Using {fallback_finger} ({fallback_secondary}) for {finger_name}")
+                            logger.info(f"FINGER FALLBACK: Using {fallback_finger} ({fallback_secondary}) for {finger_name} - value: {fb_distance}mm")
                             break
                 
                 # Record the substitution for tracking
