@@ -782,8 +782,9 @@ class SimplifiedController:
             self.cycle_count += 1
             self.avg_cycle_time = ((self.cycle_count - 1) * self.avg_cycle_time + self.last_cycle_time) / self.cycle_count
             
-            # Check for system overload
-            if self.last_cycle_time > (1.5 / self.control_rate):
+            # Check for system overload - using control_interval directly
+            # (1.5 times the expected cycle time is our threshold)
+            if self.last_cycle_time > (1.5 * self.control_interval):
                 self.fault_conditions["system_overload"] = True
             else:
                 self.fault_conditions["system_overload"] = False
