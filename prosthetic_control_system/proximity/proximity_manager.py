@@ -121,8 +121,8 @@ class ProximityManager:
         
         # Sensor data structures
         self.sensor_names = [name for _, _, name in self.sensors]
-        self.raw_values = {name: 30 for name in self.sensor_names}
-        self.filtered_values = {name: 30 for name in self.sensor_names}
+        self.raw_values = {name: 100 for name in self.sensor_names}  # Default to 100mm instead of 30mm
+        self.filtered_values = {name: 100 for name in self.sensor_names}  # Default to 100mm instead of 30mm
         self.filtered_derivatives = {name: 0.0 for name in self.sensor_names}  # mm/s
         self.status = {name: "OK" for name in self.sensor_names}  # OK, SUB, BAD
         
@@ -329,9 +329,9 @@ class ProximityManager:
             Current sensor reading in mm, or tuple (value, status) if with_status=True
         """
         if filtered:
-            value = self.filtered_values.get(sensor_name, 30)
+            value = self.filtered_values.get(sensor_name, 100)  # Default to 100mm instead of 30mm
         else:
-            value = self.raw_values.get(sensor_name, 30)
+            value = self.raw_values.get(sensor_name, 100)  # Default to 100mm instead of 30mm
             
         if with_status:
             status = self.status.get(sensor_name, "BAD")

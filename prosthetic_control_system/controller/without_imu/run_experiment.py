@@ -150,7 +150,7 @@ class ExperimentController:
                 position = 0.0  # Default to fully open
             
             # Implement twitching behavior - only for MCP sensors (prox1)
-            if sensor_name.endswith("1") and distance <= 10:  # Within 10mm
+            if sensor_name.endswith("1") and distance <= 15:  # Within 15mm
                 # Check current twitch state
                 if self.twitch_state[finger_name] == 0:
                     # Start closing (twitch phase 1)
@@ -446,7 +446,9 @@ def main():
         print("\nExperimental Twitch Controller Active - Press Ctrl+C to stop")
         print("----------------------------------------------------------")
         print("This controller makes fingers twitch (close 5° then reopen)")
-        print("when proximity sensors detect objects within 10mm")
+        print("when proximity sensors detect objects within 15mm")
+        print("\nNote: VL6180X sensors typically report readings between 0-100mm")
+        print("in the current configuration. Readings will saturate beyond this range.")
         
         while running:
             try:
