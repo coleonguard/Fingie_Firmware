@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_vl6180x.py  –  ten-sensor VL6180X poller with neighbour substitution
+fallback_test.py  –  ten-sensor VL6180X poller with neighbour substitution
 
 Wiring
 ------
@@ -10,7 +10,7 @@ MULT2 (0x73): Middle2 Ring1  Ring2  Pinky1  Pinky2
 Features
 --------
 • For each measurement we wait up to MAX_READY_MS (20 ms) for the
-  "range ready" flag.  On timeout we retry N_RETRIES times.
+  “range ready” flag.  On timeout we retry N_RETRIES times.
 • If a sensor still fails, we substitute the first available reading
   from a hand-tuned proximity list (same finger first, then neighbours).
   Substituted values are shown with a '~' prefix.
@@ -65,7 +65,7 @@ def rb(reg):
     return bus.read_byte(VL6180X_ADDR)
 
 def vl_init():
-    if rb(0x016) != 1:   # "fresh-out-of-reset"
+    if rb(0x016) != 1:   # “fresh-out-of-reset”
         return
     for r, v in [
         (0x0207,1),(0x0208,1),(0x0096,0),(0x0097,0xfd),
