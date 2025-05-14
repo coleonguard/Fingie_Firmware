@@ -45,7 +45,7 @@ DEFAULT_CONFIG = {
         "Middle": 40.0,
         "Ring": 40.0,
         "Pinky": 35.0
-    }
+    },
     
     # Debug settings
     "verbose_logging": False,         # Set to True for verbose debug logging
