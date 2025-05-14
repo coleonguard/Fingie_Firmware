@@ -379,8 +379,8 @@ class SimplifiedController:
                 except Exception as e:
                     logger.error(f"Error resetting multiplexer {hex(mux)}: {e}")
             
-            # Start hand interface
-            self.hand.connect()
+            # Hand interface is already connected during initialization
+            # No need to connect again
             
             # Motors already initialized in __init__
             
@@ -415,9 +415,10 @@ class SimplifiedController:
         # Safely stop hand interface
         try:
             if self.hand:
-                self.hand.disconnect()
+                # Call the stop method which will close the client
+                self.hand.stop()
         except Exception as e:
-            logger.error(f"Error disconnecting hand: {e}")
+            logger.error(f"Error stopping hand interface: {e}")
         
         # Close I2C bus
         try:
@@ -707,10 +708,8 @@ class SimplifiedController:
     def _send_motor_commands(self):
         """Send position commands to the motors"""
         try:
-            # Ensure hand is connected
-            if not self.hand.is_connected():
-                self.hand.connect()
-                logger.info("Reconnected to hand")
+            # The hand should already be connected during initialization
+            # No need to check connection status
             
             # Send position commands for each finger
             for finger, position in self.finger_positions.items():
