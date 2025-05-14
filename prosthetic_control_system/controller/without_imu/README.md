@@ -1,6 +1,6 @@
 # Proximity-Only Controller
 
-This module provides a simplified controller for the prosthetic hand that operates using only proximity sensors, without requiring IMU data.
+This module provides a controller for the prosthetic hand that operates using only proximity sensors, without requiring IMU data.
 
 ## Overview
 
@@ -12,10 +12,33 @@ The proximity-only controller is designed to:
 4. Implement the same state machine logic for fingers
 5. Log and monitor system performance
 
+## Controller Implementations
+
+This package includes two different controller implementations:
+
+### 1. Original Threaded Controller
+The `ProximityController` (default) uses a threaded architecture where:
+- A separate background thread continuously reads from proximity sensors
+- The main thread processes control logic and sends motor commands
+- Thread synchronization is used to coordinate these activities
+
+### 2. Simplified Controller (Recommended)
+The `SimplifiedController` uses a single-loop architecture inspired by `fallback_test.py`:
+- All operations occur in a single thread in a deterministic, sequential order
+- Sensor reading and motor control are strictly separated
+- No thread synchronization overhead or context switching
+- More reliable I2C communication with proximity sensors
+
+Use the `--simplified` flag to enable this controller:
+```bash
+python -m prosthetic_control_system.controller.without_imu.run_controller --simplified
+```
+
 ## Files
 
 - `config.py` - Configuration parameters for the proximity-only controller
-- `proximity_controller.py` - Main controller implementation
+- `proximity_controller.py` - Original threaded controller implementation
+- `simplified_controller.py` - Simplified single-loop controller implementation
 - `run_controller.py` - Launch script for the controller
 
 ## Usage
@@ -41,6 +64,9 @@ python -m prosthetic_control_system.controller.without_imu.run_controller --simu
 You can customize various parameters:
 
 ```bash
+# Use simplified architecture (recommended for reliability)
+python -m prosthetic_control_system.controller.without_imu.run_controller --simplified
+
 # Change control rate
 python -m prosthetic_control_system.controller.without_imu.run_controller --rate 30
 
@@ -64,6 +90,9 @@ python -m prosthetic_control_system.controller.without_imu.run_controller --visu
 
 # Enable verbose debugging output
 python -m prosthetic_control_system.controller.without_imu.run_controller --debug
+
+# Combine options
+python -m prosthetic_control_system.controller.without_imu.run_controller --simplified --rate 15 --visualization minimal
 ```
 
 ## Hardware Setup
@@ -144,8 +173,9 @@ The controller includes several safety features to protect the Ability Hand:
 
 5. **Sensor Substitution**: If a proximity sensor fails, the system tries to substitute readings from neighboring sensors as defined in the fallback map
 
-6. **Three-Phase Control Approach**: The controller implements a robust three-phase control strategy to prevent I2C bus contention between sensor readings and motor control:
+6. **Architectural Approaches to Prevent I2C Contention**: The two implementations use different approaches to prevent I2C bus contention between sensor readings and motor control:
 
+   **a) Original Threaded Controller** implements a three-phase control strategy:
    - **Phase 1: HARDWARE_RESET**
      - Disables all multiplexers to reset the I2C bus state
      - Adds a stabilization delay to let the I2C bus recover
@@ -163,7 +193,15 @@ The controller includes several safety features to protect the Ability Hand:
      - Processes finger and hand state machines
      - Controls motor positions and torques
 
-   This approach prevents I2C bus contention by ensuring that sensor reading and motor control operations never happen simultaneously, with explicit hardware reset between phases to maintain reliable communication.
+   **b) Simplified Controller** (recommended) follows the `fallback_test.py` architecture:
+   - Uses a single sequential control loop with no threading
+   - Reads all sensors first, then processes control logic, then sends motor commands
+   - No concurrent operations or thread synchronization
+   - Implements the same deterministic reading order as the successful experiment
+   - Uses the same timing parameters (small sleeps between operations)
+   - Includes the same fallback substitution logic
+   
+   The simplified approach closely replicates the architecture of `fallback_test.py` which has proven to be more reliable in practice.
 
 When faults occur, they are logged and displayed in the status output. The controller will try to maintain operation with degraded performance rather than failing completely.
 
@@ -190,12 +228,36 @@ The controller offers three visualization modes for monitoring system status:
 ## Performance Tuning
 
 If the controller performs sluggishly:
-1. Decrease the control rate (e.g., `--rate 15`)
-2. Increase the approach threshold (e.g., `--approach 80`)
-3. Ensure I2C buses are not overloaded
-4. Check for sources of interference
-5. Try the minimal visualization mode (`--visualization minimal`)
-6. Disable sensor analysis if enabled
+1. Try the simplified controller (`--simplified`)
+2. Decrease the control rate (e.g., `--rate 15`)
+3. Increase the approach threshold (e.g., `--approach 80`)
+4. Ensure I2C buses are not overloaded
+5. Check for sources of interference
+6. Try the minimal visualization mode (`--visualization minimal`)
+7. Disable sensor analysis if enabled
+
+## Troubleshooting I2C Issues
+
+If you're experiencing sensor errors ("all retries failed to get_distance()"), especially when motors are moving:
+
+1. **Use the Simplified Controller** (highly recommended):
+   ```bash
+   python -m prosthetic_control_system.controller.without_imu.run_controller --simplified
+   ```
+   This should resolve most I2C issues because:
+   - It follows the same architecture as the working `fallback_test.py` experiment
+   - It avoids thread synchronization issues that can cause timing problems
+   - It has deterministic timing and simplified error handling
+
+2. If still experiencing issues, try reducing the control rate:
+   ```bash
+   python -m prosthetic_control_system.controller.without_imu.run_controller --simplified --rate 10
+   ```
+
+3. For hardware debugging, check:
+   - **Pull-up Resistors**: Verify you have appropriate pull-up resistors on the I2C bus
+   - **Power Supply**: Ensure stable power for sensors and multiplexers
+   - **Cable Length**: Keep I2C cables short and away from noise sources
 
 ## Logs
 

@@ -4,6 +4,10 @@ Launch script for proximity-only control (no IMU).
 
 This script runs the controller with IMU disabled, suitable for
 testing with only proximity sensors and the Ability Hand.
+
+Two controller implementations are available:
+1. ProximityController: Original threaded implementation
+2. SimplifiedController: Based on fallback_test.py architecture, more reliable
 """
 
 import os
@@ -30,6 +34,7 @@ if repo_root not in sys.path:
 
 # Import from this package
 from prosthetic_control_system.controller.without_imu.proximity_controller import ProximityController
+from prosthetic_control_system.controller.without_imu.simplified_controller import SimplifiedController
 from prosthetic_control_system.controller.without_imu.config import DEFAULT_CONFIG
 
 # Global controller instance
@@ -346,6 +351,9 @@ def main():
                       
     parser.add_argument('--debug', action='store_true',
                       help='Enable verbose debugging output')
+                      
+    parser.add_argument('--simplified', action='store_true',
+                      help='Use simplified controller based on fallback_test.py architecture')
     
     args = parser.parse_args()
     
@@ -360,17 +368,33 @@ def main():
             motor_kwargs['port'] = args.port
         
         # Create controller with IMU disabled
-        logger.info(f"Creating controller (simulated: {args.simulate}, rate: {args.rate}Hz)")
-        controller = ProximityController(
-            control_rate=args.rate,
-            enable_logging=not args.no_logging,
-            log_dir=args.log_dir,
-            use_simulated_motors=args.simulate,
-            motor_interface_kwargs=motor_kwargs,
-            approach_threshold=args.approach,
-            contact_threshold=args.contact,
-            verbose_logging=args.debug
-        )
+        logger.info(f"Creating controller (simulated: {args.simulate}, rate: {args.rate}Hz, simplified: {args.simplified})")
+        
+        # Choose the controller implementation based on args
+        if args.simplified:
+            logger.info("Using simplified controller based on fallback_test.py architecture")
+            controller = SimplifiedController(
+                control_rate=args.rate,
+                enable_logging=not args.no_logging,
+                log_dir=args.log_dir,
+                use_simulated_motors=args.simulate,
+                motor_interface_kwargs=motor_kwargs,
+                approach_threshold=args.approach,
+                contact_threshold=args.contact,
+                verbose_logging=args.debug
+            )
+        else:
+            logger.info("Using original threaded controller implementation")
+            controller = ProximityController(
+                control_rate=args.rate,
+                enable_logging=not args.no_logging,
+                log_dir=args.log_dir,
+                use_simulated_motors=args.simulate,
+                motor_interface_kwargs=motor_kwargs,
+                approach_threshold=args.approach,
+                contact_threshold=args.contact,
+                verbose_logging=args.debug
+            )
         
         # Start controller
         logger.info("Starting controller...")
