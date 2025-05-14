@@ -20,10 +20,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ProximityControl")
 
-# Add parent directory to path if needed
-parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if parent_dir not in sys.path:
-    sys.path.append(parent_dir)
+# Add all necessary directories to path
+# First get the repository root directory (Fingie_Firmware)
+repo_root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../"))
+
+# Ensure repo root is in the path
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
 
 # Import from this package
 from prosthetic_control_system.controller.without_imu.proximity_controller import ProximityController
