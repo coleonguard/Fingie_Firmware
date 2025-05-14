@@ -265,15 +265,38 @@ class SimplifiedController:
         
         # State machine for each finger
         self.finger_fsm = {
-            "Thumb": FingerFSM(),
-            "Index": FingerFSM(),
-            "Middle": FingerFSM(),
-            "Ring": FingerFSM(),
-            "Pinky": FingerFSM(),
+            "Thumb": FingerFSM(
+                finger_name="Thumb",
+                approach_threshold=approach_threshold,
+                contact_threshold=contact_threshold
+            ),
+            "Index": FingerFSM(
+                finger_name="Index",
+                approach_threshold=approach_threshold,
+                contact_threshold=contact_threshold
+            ),
+            "Middle": FingerFSM(
+                finger_name="Middle",
+                approach_threshold=approach_threshold,
+                contact_threshold=contact_threshold
+            ),
+            "Ring": FingerFSM(
+                finger_name="Ring",
+                approach_threshold=approach_threshold,
+                contact_threshold=contact_threshold
+            ),
+            "Pinky": FingerFSM(
+                finger_name="Pinky",
+                approach_threshold=approach_threshold,
+                contact_threshold=contact_threshold
+            ),
         }
         
         # Hand state machine
-        self.hand_fsm = HandFSM()
+        self.hand_fsm = HandFSM(
+            release_current_threshold=0.2,
+            required_fingers_grasping=2
+        )
         
         # Initialize sensor state
         self.raw_values = {}  # Raw sensor readings
@@ -562,7 +585,7 @@ class SimplifiedController:
                             # Only change state if we've seen enough consecutive readings
                             if self.approach_counters[finger] >= self.consecutive_readings_required:
                                 # Apply state change
-                                fsm.set_state(new_state)
+                                fsm.force_state(new_state)
                                 
                                 # Record time of state change
                                 self.last_state_change_time[finger] = time.time()
@@ -607,7 +630,7 @@ class SimplifiedController:
         
         # Apply state change if needed
         if new_hand_state != current_hand_state:
-            self.hand_fsm.set_state(new_hand_state)
+            self.hand_fsm.force_state(new_hand_state)
     
     def _update_finger_positions(self):
         """
@@ -932,10 +955,10 @@ class SimplifiedController:
                 
                 # Reset state machines
                 if finger in self.finger_fsm:
-                    self.finger_fsm[finger].set_state(FingerState.IDLE)
+                    self.finger_fsm[finger].force_state(FingerState.IDLE)
             
             # Reset hand state
-            self.hand_fsm.set_state(HandState.IDLE)
+            self.hand_fsm.force_state(HandState.IDLE)
             
             # Send open commands to all motors
             self._send_motor_commands()
