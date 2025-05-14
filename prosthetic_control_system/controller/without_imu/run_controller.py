@@ -94,11 +94,20 @@ def _display_basic_status(status, args, controller=None):
     # Print finger information in a table format
     print("Finger Status:")
     print("-" * 85)
-    print(f"{'Finger':<10}{'State':<15}{'Distance (mm)':<15}{'Position (°)':<12}{'Proximity':<15}{'Fallback':<15}")
+    print(f"{'Finger':<10}{'State':<15}{'Distance (mm)':<15}{'Position (°)':<12}{'Raw Value':<15}{'Fallback':<15}")
     print("-" * 85)
     
     # Order fingers for consistent display
     finger_order = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
+    
+    # Try to access finger status info
+    finger_status = {}
+    if controller and hasattr(controller, 'proximity') and hasattr(controller.proximity, 'status'):
+        # Get sensor status if available
+        for sensor, status in controller.proximity.status.items():
+            for finger in finger_order:
+                if sensor.startswith(finger[0]) and sensor.endswith('1'):  # MCP sensors
+                    finger_status[finger] = status
     
     # Try to access finger substitution info
     finger_fallbacks = {}
@@ -138,8 +147,18 @@ def _display_basic_status(status, args, controller=None):
                 'CONTACT': '🔴'
             }.get(state, '⚪')
             
-            # Add fallback information
-            fallback_info = finger_fallbacks.get(finger, "")
+            # Add fallback information with status
+            fallback_info = ""
+            if finger in finger_fallbacks:
+                fallback_info = finger_fallbacks[finger]
+            elif finger in finger_status:
+                status = finger_status[finger]
+                if status == "SUB":
+                    fallback_info = "Substituted"
+                elif status == "BAD":
+                    fallback_info = "Sensor Fail"
+                elif status == "OK":
+                    fallback_info = "OK"
             
             print(f"{finger:<10}{state_emoji} {state:<13}{filtered_distance:<15}{position:.1f}°{raw_proximity:<15}{fallback_info:<15}")
     
