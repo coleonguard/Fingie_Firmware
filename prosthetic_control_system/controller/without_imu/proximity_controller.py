@@ -271,8 +271,12 @@ class ProximityController:
         
         logger.info("Proximity controller initialized")
     
-    def _process_finger(self, sensor_name, finger_name):
-        """Process control for a single finger"""
+    def _process_finger_with_cached_data(self, sensor_name, finger_name, cached_distance, cached_status):
+        """
+        Process control for a single finger using pre-cached sensor data.
+        
+        This is used in the serialized control loop to avoid I2C contention.
+        """
         # Get the finger FSM
         fsm = self.finger_fsms[finger_name]
         
@@ -283,96 +287,15 @@ class ProximityController:
             secondary_sensor = finger_sensors.get('secondary', None)
             
             # Check if we need to substitute from another finger
-            substituted_from = None
+            substituted_from = self.finger_substitutions.get(finger_name)
             
-            # Get primary sensor value with error handling
-            distance, status = self.proximity.get_sensor_value(
-                primary_sensor, filtered=True, with_status=True
-            )
-            
-            # Always get secondary sensor value if available for analysis
-            secondary_distance = None
-            secondary_status = "NONE"
-            if secondary_sensor is not None:
-                secondary_distance, secondary_status = self.proximity.get_sensor_value(
-                    secondary_sensor, filtered=True, with_status=True
-                )
-                
-                # Collect data for MCP vs PIP analysis if both readings are valid
-                if self.sensor_analysis['collection_start'] is not None and \
-                   status != "BAD" and secondary_status != "BAD" and \
-                   distance is not None and secondary_distance is not None:
-                    # Store readings for analysis
-                    if finger_name in self.sensor_analysis['mcp_readings']:
-                        self.sensor_analysis['mcp_readings'][finger_name].append(distance)
-                        self.sensor_analysis['pip_readings'][finger_name].append(secondary_distance)
-                        self.sensor_analysis['mcp_pip_diff'][finger_name].append(distance - secondary_distance)
-                        # Keep lists at a reasonable size
-                        max_samples = 1000
-                        if len(self.sensor_analysis['mcp_readings'][finger_name]) > max_samples:
-                            self.sensor_analysis['mcp_readings'][finger_name] = self.sensor_analysis['mcp_readings'][finger_name][-max_samples:]
-                            self.sensor_analysis['pip_readings'][finger_name] = self.sensor_analysis['pip_readings'][finger_name][-max_samples:]
-                            self.sensor_analysis['mcp_pip_diff'][finger_name] = self.sensor_analysis['mcp_pip_diff'][finger_name][-max_samples:]
-            
-            # Try secondary sensor if primary is BAD
-            if (status == "BAD" or distance is None) and secondary_sensor is not None and \
-               secondary_status != "BAD" and secondary_distance is not None:
-                logger.debug(f"Primary sensor {primary_sensor} is {status}, using secondary {secondary_sensor}")
-                distance = secondary_distance
-                status = "SEC" # Mark as coming from secondary sensor
-                logger.debug(f"Using secondary sensor {secondary_sensor} with value {distance}mm")
-            
-            # Cross-finger fallback - if both sensors are bad OR if all readings are 100mm (effectively nothing detected)
-            use_fallback = (status == "BAD" or distance is None or (distance >= 99 and secondary_distance is not None and secondary_distance >= 99))
-            
-            if use_fallback:
-                # Get the fallback mapping for this finger
-                fallback_fingers = FINGER_FALLBACK_MAP.get(finger_name, [])
-                logger.debug(f"Trying fallback for {finger_name} ({distance}mm): {fallback_fingers}")
-                
-                for fallback_finger in fallback_fingers:
-                    # Skip if we're already using this as a fallback
-                    if self.finger_substitutions.get(fallback_finger) is not None:
-                        logger.debug(f"Skipping {fallback_finger} as fallback for {finger_name} (already substituted)")
-                        continue
-                    
-                    # Get sensors for fallback finger
-                    fallback_sensors = self._get_finger_sensors(fallback_finger)
-                    
-                    # Try primary sensor of fallback finger
-                    fallback_primary = fallback_sensors.get('primary')
-                    if fallback_primary:
-                        fb_distance, fb_status = self.proximity.get_sensor_value(
-                            fallback_primary, filtered=True, with_status=True
-                        )
-                        # Only use fallback if it's a valid reading AND not at the max distance
-                        if fb_status != "BAD" and fb_distance is not None and fb_distance < 99:
-                            distance = fb_distance
-                            status = "FB"  # Mark as coming from fallback finger
-                            substituted_from = fallback_finger
-                            logger.info(f"FINGER FALLBACK: Using {fallback_finger} ({fallback_primary}) for {finger_name} - value: {fb_distance}mm")
-                            break
-                    
-                    # Try secondary sensor of fallback finger if primary failed
-                    fallback_secondary = fallback_sensors.get('secondary')
-                    if fallback_secondary:
-                        fb_distance, fb_status = self.proximity.get_sensor_value(
-                            fallback_secondary, filtered=True, with_status=True
-                        )
-                        # Only use fallback if it's a valid reading AND not at the max distance
-                        if fb_status != "BAD" and fb_distance is not None and fb_distance < 99:
-                            distance = fb_distance
-                            status = "FB"  # Mark as coming from fallback finger
-                            substituted_from = fallback_finger
-                            logger.info(f"FINGER FALLBACK: Using {fallback_finger} ({fallback_secondary}) for {finger_name} - value: {fb_distance}mm")
-                            break
-                
-                # Record the substitution for tracking
-                self.finger_substitutions[finger_name] = substituted_from
+            # Use the cached distance and status directly
+            distance = cached_distance
+            status = cached_status
             
             # Safety check - if sensor reading is invalid, default to safe distance
             if distance is None or status == "BAD":
-                logger.debug(f"Invalid sensor reading for {sensor_name}, defaulting to safe distance")
+                logger.debug(f"Invalid cached sensor reading for {sensor_name}, defaulting to safe distance")
                 # Default to a safe value that won't cause closure
                 distance = 100
                 status = "DEFAULT"
@@ -637,7 +560,7 @@ class ProximityController:
             
         except Exception as e:
             # Catch-all error handler
-            logger.error(f"Unhandled error in _process_finger for {finger_name}: {e}")
+            logger.error(f"Unhandled error in _process_finger_with_cached_data for {finger_name}: {e}")
             # Return safe default values
             return {
                 "state": "ERROR",
@@ -648,6 +571,133 @@ class ProximityController:
                 "current": 0.0,
                 "torque_target": 0.0,
                 "current_derivative": 0.0
+            }
+            
+    def _process_finger(self, sensor_name, finger_name):
+        """Process control for a single finger"""
+        # Get the finger FSM
+        fsm = self.finger_fsms[finger_name]
+        
+        try:
+            # Try to get associated MCP and PIP sensors for this finger
+            finger_sensors = self._get_finger_sensors(finger_name)
+            primary_sensor = finger_sensors.get('primary', sensor_name)
+            secondary_sensor = finger_sensors.get('secondary', None)
+            
+            # Check if we need to substitute from another finger
+            substituted_from = None
+            
+            # Get primary sensor value with error handling
+            distance, status = self.proximity.get_sensor_value(
+                primary_sensor, filtered=True, with_status=True
+            )
+            
+            # Always get secondary sensor value if available for analysis
+            secondary_distance = None
+            secondary_status = "NONE"
+            if secondary_sensor is not None:
+                secondary_distance, secondary_status = self.proximity.get_sensor_value(
+                    secondary_sensor, filtered=True, with_status=True
+                )
+                
+                # Collect data for MCP vs PIP analysis if both readings are valid
+                if self.sensor_analysis['collection_start'] is not None and \
+                   status != "BAD" and secondary_status != "BAD" and \
+                   distance is not None and secondary_distance is not None:
+                    # Store readings for analysis
+                    if finger_name in self.sensor_analysis['mcp_readings']:
+                        self.sensor_analysis['mcp_readings'][finger_name].append(distance)
+                        self.sensor_analysis['pip_readings'][finger_name].append(secondary_distance)
+                        self.sensor_analysis['mcp_pip_diff'][finger_name].append(distance - secondary_distance)
+                        # Keep lists at a reasonable size
+                        max_samples = 1000
+                        if len(self.sensor_analysis['mcp_readings'][finger_name]) > max_samples:
+                            self.sensor_analysis['mcp_readings'][finger_name] = self.sensor_analysis['mcp_readings'][finger_name][-max_samples:]
+                            self.sensor_analysis['pip_readings'][finger_name] = self.sensor_analysis['pip_readings'][finger_name][-max_samples:]
+                            self.sensor_analysis['mcp_pip_diff'][finger_name] = self.sensor_analysis['mcp_pip_diff'][finger_name][-max_samples:]
+            
+            # Try secondary sensor if primary is BAD
+            if (status == "BAD" or distance is None) and secondary_sensor is not None and \
+               secondary_status != "BAD" and secondary_distance is not None:
+                logger.debug(f"Primary sensor {primary_sensor} is {status}, using secondary {secondary_sensor}")
+                distance = secondary_distance
+                status = "SEC" # Mark as coming from secondary sensor
+                logger.debug(f"Using secondary sensor {secondary_sensor} with value {distance}mm")
+            
+            # Cross-finger fallback - if both sensors are bad OR if all readings are 100mm (effectively nothing detected)
+            use_fallback = (status == "BAD" or distance is None or (distance >= 99 and secondary_distance is not None and secondary_distance >= 99))
+            
+            if use_fallback:
+                # Get the fallback mapping for this finger
+                fallback_fingers = FINGER_FALLBACK_MAP.get(finger_name, [])
+                logger.debug(f"Trying fallback for {finger_name} ({distance}mm): {fallback_fingers}")
+                
+                for fallback_finger in fallback_fingers:
+                    # Skip if we're already using this as a fallback
+                    if self.finger_substitutions.get(fallback_finger) is not None:
+                        logger.debug(f"Skipping {fallback_finger} as fallback for {finger_name} (already substituted)")
+                        continue
+                    
+                    # Get sensors for fallback finger
+                    fallback_sensors = self._get_finger_sensors(fallback_finger)
+                    
+                    # Try primary sensor of fallback finger
+                    fallback_primary = fallback_sensors.get('primary')
+                    if fallback_primary:
+                        fb_distance, fb_status = self.proximity.get_sensor_value(
+                            fallback_primary, filtered=True, with_status=True
+                        )
+                        # Only use fallback if it's a valid reading AND not at the max distance
+                        if fb_status != "BAD" and fb_distance is not None and fb_distance < 99:
+                            distance = fb_distance
+                            status = "FB"  # Mark as coming from fallback finger
+                            substituted_from = fallback_finger
+                            logger.info(f"FINGER FALLBACK: Using {fallback_finger} ({fallback_primary}) for {finger_name} - value: {fb_distance}mm")
+                            break
+                    
+                    # Try secondary sensor of fallback finger if primary failed
+                    fallback_secondary = fallback_sensors.get('secondary')
+                    if fallback_secondary:
+                        fb_distance, fb_status = self.proximity.get_sensor_value(
+                            fallback_secondary, filtered=True, with_status=True
+                        )
+                        # Only use fallback if it's a valid reading AND not at the max distance
+                        if fb_status != "BAD" and fb_distance is not None and fb_distance < 99:
+                            distance = fb_distance
+                            status = "FB"  # Mark as coming from fallback finger
+                            substituted_from = fallback_finger
+                            logger.info(f"FINGER FALLBACK: Using {fallback_finger} ({fallback_secondary}) for {finger_name} - value: {fb_distance}mm")
+                            break
+                
+                # Record the substitution for tracking
+                self.finger_substitutions[finger_name] = substituted_from
+            
+            # Safety check - if sensor reading is invalid, default to safe distance
+            if distance is None or status == "BAD":
+                logger.debug(f"Invalid sensor reading for {sensor_name}, defaulting to safe distance")
+                # Default to a safe value that won't cause closure
+                distance = 100
+                status = "DEFAULT"
+                
+            # The rest of the method remains unchanged
+            # In the two-phase approach, this method is not used for motor control operations
+            # but is kept for backward compatibility and direct use if needed
+            
+            # Return state information with distance only
+            return {
+                "distance": distance, 
+                "sensor_status": status,
+                "substituted_from": substituted_from
+            }
+            
+        except Exception as e:
+            # Catch-all error handler
+            logger.error(f"Unhandled error in _process_finger for {finger_name}: {e}")
+            # Return safe default values
+            return {
+                "state": "ERROR",
+                "distance": 100,  # Far distance
+                "sensor_status": "ERROR"
             }
     
     def _get_finger_sensors(self, finger_name):
@@ -712,9 +762,30 @@ class ProximityController:
             return self.hand_fsm.state
     
     def _control_loop(self):
-        """Main control loop that runs at the specified rate"""
+        """
+        Main control loop that runs at the specified rate with alternating phases.
+        
+        This implements a two-phase approach:
+        1. Sensor Reading Phase - Reads all proximity sensors without motor commands
+        2. Motor Control Phase - Processes finger states and controls motors without sensor reads
+        
+        This prevents I2C bus contention between sensors and motors.
+        """
         next_update_time = time.time()
         
+        # Phase tracking (alternates between sensor reading and motor control)
+        current_phase = "SENSORS"  # Start with sensor reading phase
+        
+        # Cached sensor data to use during motor control phase
+        sensor_cache = {}
+        
+        # Cached finger data to use during sensor reading phase
+        finger_cache = {}
+        
+        # When was the last sensor reading phase completed
+        last_sensor_read_time = 0
+        
+        # Main control loop
         while self.running and not self.shutdown_event.is_set():
             # Check for shutdown at loop start
             if self.is_shutting_down or self.shutdown_event.is_set():
@@ -729,96 +800,138 @@ class ProximityController:
                     # Check for shutdown again before main processing
                     if self.is_shutting_down or self.shutdown_event.is_set():
                         break
+                    
+                    # Phase 1: Read Sensors (without motor control)
+                    if current_phase == "SENSORS":
+                        # Log phase switch
+                        logger.debug("Control phase: SENSORS")
                         
-                    # Read all finger sensors and process control
-                    finger_data = {}
-                    for sensor_name, finger_name in self.finger_mapping.items():
-                        # Skip if shutting down
-                        if self.is_shutting_down or self.shutdown_event.is_set():
-                            break
-                        finger_data[finger_name] = self._process_finger(sensor_name, finger_name)
-                    
-                    # Abort if shutdown detected during processing
-                    if self.is_shutting_down or self.shutdown_event.is_set():
-                        break
-                    
-                    # Update hand state
-                    hand_state = self._update_hand_state(finger_data)
-                    
-                    # Detect faults (more gracefully with retries)
-                    try:
-                        # Count bad sensors instead of just checking two specific ones
-                        bad_sensors = 0
-                        critical_sensors = ["Thumb1", "Index1", "Middle1", "Ring1", "Pinky1"]
+                        # Record the time of the sensor update
+                        last_sensor_read_time = time.time()
                         
-                        for sensor in critical_sensors:
+                        # Clear sensor cache for fresh values
+                        sensor_cache = {}
+                        
+                        # Read all finger sensors without processing control
+                        for sensor_name in self.proximity.sensor_names:
                             try:
-                                # Skip if we're shutting down
+                                # Skip if shutting down
                                 if self.is_shutting_down or self.shutdown_event.is_set():
                                     break
                                     
-                                # Get sensor status with retry
-                                status = "BAD"  # Default to BAD
-                                for retry in range(3):
-                                    try:
-                                        _, status = self.proximity.get_sensor_value(sensor, with_status=True)
-                                        if status != "BAD":
-                                            break
-                                        time.sleep(0.002)  # Small delay between retries
-                                    except Exception:
-                                        time.sleep(0.002)
+                                # Get sensor value
+                                value, status = self.proximity.get_sensor_value(
+                                    sensor_name, filtered=True, with_status=True
+                                )
                                 
+                                # Store in cache
+                                sensor_cache[sensor_name] = (value, status)
+                            except Exception as e:
+                                logger.debug(f"Error reading sensor {sensor_name}: {e}")
+                                sensor_cache[sensor_name] = (None, "ERROR")
+                        
+                        # Switch phase
+                        current_phase = "MOTORS"
+                        logger.debug(f"Read {len(sensor_cache)} sensors, switching to MOTORS phase")
+                        
+                    # Phase 2: Process control using cached sensor data (without sensor reads)
+                    elif current_phase == "MOTORS":
+                        # Log phase switch
+                        logger.debug("Control phase: MOTORS")
+                        
+                        # Only proceed if we have sensor data
+                        if not sensor_cache:
+                            logger.warning("No sensor data available for motor control phase")
+                            # Switch back to sensor phase
+                            current_phase = "SENSORS"
+                            continue
+                        
+                        # Check if sensor data is too old (> 200ms)
+                        if time.time() - last_sensor_read_time > 0.2:
+                            logger.warning("Sensor data is too old, refreshing...")
+                            # Switch back to sensor phase
+                            current_phase = "SENSORS"
+                            continue
+                        
+                        # Process finger states using cached sensor data
+                        finger_data = {}
+                        for sensor_name, finger_name in self.finger_mapping.items():
+                            # Skip if shutting down
+                            if self.is_shutting_down or self.shutdown_event.is_set():
+                                break
+                                
+                            # Get cached sensor data
+                            cached_value, cached_status = sensor_cache.get(sensor_name, (None, "UNKNOWN"))
+                            
+                            # Process finger state with cached data
+                            finger_data[finger_name] = self._process_finger_with_cached_data(
+                                sensor_name, finger_name, cached_value, cached_status
+                            )
+                        
+                        # Save finger data for future use
+                        finger_cache = finger_data
+                        
+                        # Abort if shutdown detected during processing
+                        if self.is_shutting_down or self.shutdown_event.is_set():
+                            break
+                        
+                        # Update hand state
+                        hand_state = self._update_hand_state(finger_data)
+                        
+                        # Detect faults (using cached sensor data)
+                        try:
+                            # Count bad sensors using cached data
+                            bad_sensors = 0
+                            critical_sensors = ["Thumb1", "Index1", "Middle1", "Ring1", "Pinky1"]
+                            
+                            for sensor in critical_sensors:
+                                _, status = sensor_cache.get(sensor, (None, "BAD"))
                                 if status == "BAD":
                                     bad_sensors += 1
-                                    logger.debug(f"Sensor {sensor} is BAD")
-                            except Exception as e:
-                                logger.debug(f"Error checking sensor {sensor}: {e}")
-                                bad_sensors += 1
-                        
-                        # Set fault if more than 2 critical sensors are bad
-                        if bad_sensors >= 2:
-                            self.fault_status["sensor_failure"] = True
-                            logger.warning(f"Sensor failure detected: {bad_sensors} critical sensors failing")
-                        else:
-                            self.fault_status["sensor_failure"] = False
-                    except Exception as e:
-                        logger.warning(f"Error checking sensor status: {e}")
-                        # Don't change fault status if we can't check
-                    
-                    # Log data if not shutting down
-                    if self.data_logger and not self.is_shutting_down:
-                        try:
-                            proximity_values = {}
-                            # Only get values if not shutting down
-                            if not self.is_shutting_down and not self.shutdown_event.is_set():
-                                for name in self.proximity.sensor_names:
-                                    try:
-                                        proximity_values[name] = self.proximity.get_sensor_value(name)
-                                    except Exception:
-                                        proximity_values[name] = None
+                                    logger.debug(f"Sensor {sensor} is BAD (from cache)")
                             
-                            # Create log data compatible with logger format
-                            log_data = {
-                                "timestamp": time.time(),
-                                "hand_state": hand_state.name,
-                                "fingers": finger_data,
-                                "proximity": {
-                                    "raw": proximity_values,
-                                    "filtered": proximity_values,
-                                    "status": {name: "OK" for name in proximity_values}
-                                },
-                                "imu": {
-                                    "orientation": {"roll": 0.0, "pitch": 0.0, "yaw": 0.0},
-                                    "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0},
-                                    "angular_rate": {"x": 0.0, "y": 0.0, "z": 0.0},
-                                    "motion_state": "STATIC"
-                                },
-                                "faults": self.fault_status
-                            }
-                            # Use the correct method name (log_data instead of log)
-                            self.data_logger.log_data(log_data)
+                            # Set fault if more than 2 critical sensors are bad
+                            if bad_sensors >= 2:
+                                self.fault_status["sensor_failure"] = True
+                                logger.warning(f"Sensor failure detected: {bad_sensors} critical sensors failing")
+                            else:
+                                self.fault_status["sensor_failure"] = False
                         except Exception as e:
-                            logger.error(f"Error logging data: {e}")
+                            logger.warning(f"Error checking sensor status: {e}")
+                            # Don't change fault status if we can't check
+                        
+                        # Log data if not shutting down
+                        if self.data_logger and not self.is_shutting_down:
+                            try:
+                                # Create log data compatible with logger format using cached sensor values
+                                proximity_values = {name: value for name, (value, _) in sensor_cache.items()}
+                                proximity_status = {name: status for name, (_, status) in sensor_cache.items()}
+                                
+                                log_data = {
+                                    "timestamp": time.time(),
+                                    "hand_state": hand_state.name,
+                                    "fingers": finger_data,
+                                    "proximity": {
+                                        "raw": proximity_values,
+                                        "filtered": proximity_values,
+                                        "status": proximity_status
+                                    },
+                                    "imu": {
+                                        "orientation": {"roll": 0.0, "pitch": 0.0, "yaw": 0.0},
+                                        "acceleration": {"x": 0.0, "y": 0.0, "z": 0.0},
+                                        "angular_rate": {"x": 0.0, "y": 0.0, "z": 0.0},
+                                        "motion_state": "STATIC"
+                                    },
+                                    "faults": self.fault_status
+                                }
+                                # Use the correct method name (log_data instead of log)
+                                self.data_logger.log_data(log_data)
+                            except Exception as e:
+                                logger.error(f"Error logging data: {e}")
+                        
+                        # Switch phase
+                        current_phase = "SENSORS"
+                        logger.debug("Processed motor control, switching to SENSORS phase")
                     
                     # Update timing stats
                     end_time = time.time()
@@ -840,8 +953,8 @@ class ProximityController:
                     # Update max cycle time
                     self.max_cycle_time = max(self.max_cycle_time, cycle_time)
                     
-                    # Calculate next update time
-                    next_update_time = start_time + self.control_interval
+                    # Calculate next update time - we run at 2x the control rate to account for two phases
+                    next_update_time = start_time + (self.control_interval / 2)
                     
                 except Exception as e:
                     logger.error(f"Error in control loop: {e}")
@@ -970,6 +1083,7 @@ class ProximityController:
                 logger.error(f"Error stopping proximity manager: {e}")
         
         logger.info("Proximity controller stopped")
+        logger.info("Control phases summary: Used alternating SENSORS and MOTORS phases to prevent I2C contention")
     
     def safety_reset(self):
         """
