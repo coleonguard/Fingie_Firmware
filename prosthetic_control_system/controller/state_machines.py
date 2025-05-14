@@ -6,7 +6,7 @@ This module defines the state machines used by the unified controller:
 1. Finger FSM: Manages individual finger states (APPROACH/PROPORTIONAL/CONTACT)
 2. Hand FSM: Manages overall hand states (REACH/GRASP/LIFT/LOWER/RELEASE)
 """
-
+ 
 import time
 import logging
 from enum import Enum, auto
