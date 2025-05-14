@@ -447,8 +447,9 @@ def main():
         print("----------------------------------------------------------")
         print("This controller makes fingers twitch (close 5° then reopen)")
         print("when proximity sensors detect objects within 15mm")
-        print("\nNote: VL6180X sensors typically report readings between 0-100mm")
-        print("in the current configuration. Readings will saturate beyond this range.")
+        print("\nNote: VL6180X sensors report distance readings up to 100mm range")
+        print("When no object is detected, the sensor reports the maximum distance value.")
+        print("Status will be OK for valid readings, SUB for substituted values, and BAD for failures.")
         
         while running:
             try:

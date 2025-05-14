@@ -286,34 +286,25 @@ class ProximityManager:
         # Check if we're in shutdown
         if self.shutdown_event.is_set():
             raise RuntimeError("Cannot access hardware during shutdown")
-            
-        for attempt in range(self.n_retries):
-            # Check for shutdown again before each retry
-            if self.shutdown_event.is_set():
-                raise RuntimeError("Cannot access hardware during shutdown")
-                
+        
+        # Implementation identical to fallback_test.py get_distance() function
+        for _ in range(self.n_retries):
             try:
                 self.start_range()
                 self.wait_ready()
-                distance = self.read_byte(0x062)  # Range result register
+                d = self.read_byte(0x062)  # Range result register
                 self.clear_interrupts()
-                return distance
+                return d
             except TimeoutError:
-                # Log and retry
-                time.sleep(0.002)
+                time.sleep(0.002)   # Let the sensor settle before retry
             except RuntimeError as e:
                 # If we're shutting down, propagate the exception
                 if "shutdown" in str(e):
                     raise
-                # Otherwise, log and continue with retries
-                logger.warning(f"Error in get_distance (attempt {attempt+1}/{self.n_retries}): {e}")
-            except Exception as e:
-                # Log and retry for other exceptions
-                logger.warning(f"Error in get_distance (attempt {attempt+1}/{self.n_retries}): {e}")
+                # Otherwise, treat like timeout and retry
                 time.sleep(0.002)
         
-        # All retries failed
-        logger.warning("All retries failed in get_distance()")
+        # All retries failed - return None to match fallback_test.py behavior
         return None
     
     def get_sensor_value(self, sensor_name, filtered=True, with_status=False):
@@ -363,9 +354,13 @@ class ProximityManager:
         2. Applies Kalman filtering to raw values
         3. Applies fallback substitution for failed readings
         4. Updates status for each sensor
+        
+        Behavior is modeled after fallback_test.py for consistency.
         """
-        # Step 1: Read raw values from all sensors
+        # Step 1: Read raw values from all sensors (similar to fallback_test.py)
         raw = {}
+        ok = []
+        
         for mux, ch, name in self.sensors:
             try:
                 # Select the correct channel on the multiplexer
@@ -380,10 +375,11 @@ class ProximityManager:
                 # Read raw distance
                 distance = self.get_distance()
                 
-                # Store valid readings
+                # Store valid readings just like fallback_test.py does
                 if distance is not None:
                     raw[name] = distance
                     self.raw_values[name] = distance
+                    ok.append(name)  # Mark as OK just like fallback_test.py
                 else:
                     # Keep as None to indicate read failure
                     raw[name] = None
@@ -414,10 +410,10 @@ class ProximityManager:
                         dv = values[-1] - values[0]
                         self.filtered_derivatives[name] = dv / dt
                 
-                # Update status
+                # Update status - any valid reading is OK (like fallback_test.py)
                 self.status[name] = "OK"
         
-        # Step 3: Apply fallback substitution for failed readings
+        # Step 3: Apply fallback substitution for failed readings (like fallback_test.py)
         final = {}
         substituted = []
         bad = []
@@ -427,7 +423,7 @@ class ProximityManager:
                 # Direct reading available
                 final[name] = self.filtered_values[name]
             else:
-                # Try neighbors in fallback map
+                # Try neighbors in fallback map (exactly like fallback_test.py)
                 for nb in self.fallback_map.get(name, []):
                     if raw.get(nb) is not None:
                         # Use neighbor's value
@@ -441,9 +437,9 @@ class ProximityManager:
                     bad.append(name)
                     self.status[name] = "BAD"
         
-        # Log substitution summary
+        # Log substitution summary (like fallback_test.py)
         if substituted or bad:
-            logger.debug(f"SUB={substituted} BAD={bad}")
+            logger.debug(f"Summary: OK={ok} SUB={substituted} BAD={bad}")
     
     def _sensor_reading_thread(self):
         """
