@@ -305,6 +305,7 @@ class ProximityManager:
                 time.sleep(0.002)
         
         # All retries failed - return None to match fallback_test.py behavior
+        logger.warning("All retries failed in get_distance()")
         return None
     
     def get_sensor_value(self, sensor_name, filtered=True, with_status=False):
@@ -437,6 +438,8 @@ class ProximityManager:
                     # This ensures values don't get stuck at the last detected position
                     final[name] = 100  # Maximum distance when no reading is available
                     self.filtered_values[name] = 100  # Update filtered values too
+                    # Update raw values too to ensure consistent state
+                    self.raw_values[name] = 100
                     bad.append(name)
                     self.status[name] = "BAD"
         

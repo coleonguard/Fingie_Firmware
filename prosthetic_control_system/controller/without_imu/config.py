@@ -20,11 +20,25 @@ DEFAULT_CONFIG = {
     "use_imu": False,  # Set to false to disable IMU dependency
     
     # Proximity thresholds (mm)
-    "approach_threshold": 40,
-    "contact_threshold": 5,
+    "approach_threshold": 25,  # More conservative approach threshold (was 40)
+    "contact_threshold": 10,   # Increased contact threshold (was 5)
     
     # Controller behavior
     "auto_release_timeout": 5.0,  # seconds
+    
+    # Distance filtering
+    "consecutive_readings_required": 3,  # Number of consecutive readings before triggering
+    "reset_distance": 40,            # Distance to consider object moved away (mm)
+    "startup_delay": 2.0,            # Delay after startup before allowing closure (seconds)
+    
+    # State transition timing (to slow down finger movement)
+    "min_time_in_idle": 0.1,         # Minimum time in IDLE state before transitioning (seconds)
+    "min_time_in_approach": 0.2,     # Minimum time in APPROACH state before transitioning (seconds)
+    "min_time_in_proportional": 0.3, # Minimum time in PROPORTIONAL state before transitioning (seconds)
+    "min_time_in_contact": 0.2,      # Minimum time in CONTACT state before transitioning (seconds)
+    
+    # Debug settings
+    "verbose_logging": False,         # Set to True for verbose debug logging
 }
 
 # Default multiplexer addresses - MAKE SURE THESE MATCH YOUR HARDWARE
