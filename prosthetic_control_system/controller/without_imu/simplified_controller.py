@@ -184,8 +184,6 @@ class SimplifiedController:
             verbose_logging: Whether to enable verbose logging
         """
         # Save parameters
-        self.control_rate = control_rate
-        self.control_interval = 1.0 / control_rate
         self.enable_logging = enable_logging
         self.approach_threshold = approach_threshold
         self.contact_threshold = contact_threshold
@@ -215,6 +213,10 @@ class SimplifiedController:
         
         # Create Ability Hand interface
         self.hand = AbilityHandInterface(self.motors)
+        
+        # Store control rate for calculations
+        self.control_rate = control_rate  # Hz
+        self.control_interval = 1.0 / control_rate  # seconds
         
         # Initialize data logger if enabled
         self.logger = None
