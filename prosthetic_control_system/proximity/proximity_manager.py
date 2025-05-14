@@ -433,7 +433,10 @@ class ProximityManager:
                         break
                 else:
                     # No substitution available
-                    final[name] = None
+                    # Even for BAD readings, we'll set the distance to maximum (100mm)
+                    # This ensures values don't get stuck at the last detected position
+                    final[name] = 100  # Maximum distance when no reading is available
+                    self.filtered_values[name] = 100  # Update filtered values too
                     bad.append(name)
                     self.status[name] = "BAD"
         
