@@ -19,13 +19,12 @@ from typing import Dict, List, Tuple, Set, Optional, Any
 parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(parent_dir)
 
-from proximity.proximity_manager import ProximityManager
-from hand.ability_hand_interface import AbilityHandInterface
-from hand.motor_interface import MotorNotMovingError
-from controller.state_machines import FingerFSM, HandFSM
+from prosthetic_control_system.proximity.proximity_manager import ProximityManager
+from prosthetic_control_system.hand.ability_hand_interface import AbilityHandInterface
+from prosthetic_control_system.controller.state_machines import FingerFSM, HandFSM
 
 # Import configuration
-from controller.without_imu.config import (
+from prosthetic_control_system.controller.without_imu.config import (
     SENSORS, FALLBACK, SWEEP_HZ, MAX_DISTANCE,
     FINGER_OPEN_POS, FINGER_CLOSE_POS, PROX_THRESH,
     FINGER_NAMES, FINGER_TO_MOTOR_MAP
