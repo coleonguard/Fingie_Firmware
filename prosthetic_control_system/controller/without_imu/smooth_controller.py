@@ -23,12 +23,62 @@ from prosthetic_control_system.proximity.proximity_manager import ProximityManag
 from prosthetic_control_system.hand.ability_hand_interface import AbilityHandInterface
 from prosthetic_control_system.controller.state_machines import FingerFSM, HandFSM
 
-# Import configuration
-from prosthetic_control_system.controller.without_imu.config import (
-    SENSORS, FALLBACK, SWEEP_HZ, MAX_DISTANCE,
-    FINGER_OPEN_POS, FINGER_CLOSE_POS, PROX_THRESH,
-    FINGER_NAMES, FINGER_TO_MOTOR_MAP
-)
+# Define configuration constants directly from fallback_test.py
+SWEEP_HZ = 5  # Sensor sweep frequency (Hz)
+
+SENSORS = [  # (name, mux-addr, channel)
+    ("Thumb1",  0x77, 0), ("Thumb2",  0x77, 1),
+    ("Index1",  0x77, 2), ("Index2",  0x77, 3),
+    ("Middle1", 0x77, 4), ("Middle2", 0x73, 0),
+    ("Ring1",   0x73, 1), ("Ring2",   0x73, 2),
+    ("Pinky1",  0x73, 3), ("Pinky2",  0x73, 4),
+]
+
+FALLBACK = {
+    "Thumb1":["Thumb2","Index1","Index2","Middle1"],
+    "Thumb2":["Thumb1","Index2","Index1","Middle2"],
+    "Index1":["Index2","Thumb2","Middle1","Middle2"],
+    "Index2":["Index1","Middle2","Thumb2","Middle1"],
+    "Middle1":["Middle2","Index1","Ring1","Ring2"],
+    "Middle2":["Middle1","Index2","Ring2","Ring1"],
+    "Ring1"  :["Ring2","Middle1","Pinky1","Pinky2"],
+    "Ring2"  :["Ring1","Middle2","Pinky2","Pinky1"],
+    "Pinky1" :["Pinky2","Ring1","Ring2","Middle1"],
+    "Pinky2" :["Pinky1","Ring2","Ring1","Middle2"],
+}
+
+# Motor control constants
+MAX_DISTANCE = 100  # Maximum distance in mm
+PROX_THRESH = 30    # Proximity threshold for finger closure
+
+# Finger positions (0-100 scale)
+FINGER_OPEN_POS = {
+    "Thumb": 0.0,
+    "Index": 0.0,
+    "Middle": 0.0,
+    "Ring": 0.0,
+    "Pinky": 0.0
+}
+
+FINGER_CLOSE_POS = {
+    "Thumb": 50.0,
+    "Index": 50.0,
+    "Middle": 50.0,
+    "Ring": 50.0,
+    "Pinky": 50.0
+}
+
+# Standard finger names
+FINGER_NAMES = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
+
+# Mapping from finger names to motor IDs
+FINGER_TO_MOTOR_MAP = {
+    "Thumb": 4,   # Motor ID for thumb
+    "Index": 0,   # Motor ID for index
+    "Middle": 1,  # Motor ID for middle
+    "Ring": 2,    # Motor ID for ring
+    "Pinky": 3    # Motor ID for pinky
+}
 
 # Physics parameters for smooth motion
 VELOCITY_LIMIT = 0.2  # Max position units per iteration
@@ -277,23 +327,32 @@ def motor_thread(shared_state, hand):
             readings = shared_state.get_sensor_readings()
             current_positions, current_velocities = shared_state.get_positions_and_velocities()
             
-            # Update FSMs with proximity data
-            for name in FINGER_NAMES:
-                distance = readings['final'].get(name)
+            # Map MCP sensors to fingers for control
+            sensor_to_finger = {
+                "Thumb1": "Thumb",
+                "Index1": "Index",
+                "Middle1": "Middle",
+                "Ring1": "Ring",
+                "Pinky1": "Pinky"
+            }
+            
+            # Update FSMs with proximity data from MCP sensors
+            for sensor, finger in sensor_to_finger.items():
+                distance = readings['final'].get(sensor)
                 if distance is not None:
                     # 1. Update finger FSM
-                    finger_fsms[name].update(distance)
+                    finger_fsms[finger].update(distance)
                     
                     # 2. Calculate command offset based on FSM state and proximity
-                    if finger_fsms[name].state == 'CLOSING':
+                    if finger_fsms[finger].state == 'CLOSING':
                         # Linear interpolation between open and close positions
                         progress = min(1.0, max(0.0, (MAX_DISTANCE - distance) / (MAX_DISTANCE - PROX_THRESH)))
-                        target = FINGER_OPEN_POS[name] + progress * (FINGER_CLOSE_POS[name] - FINGER_OPEN_POS[name])
-                        command_offsets[name] = target
-                    elif finger_fsms[name].state == 'OPENING':
-                        command_offsets[name] = FINGER_OPEN_POS[name]
-                    elif finger_fsms[name].state == 'CLOSED':
-                        command_offsets[name] = FINGER_CLOSE_POS[name]
+                        target = FINGER_OPEN_POS[finger] + progress * (FINGER_CLOSE_POS[finger] - FINGER_OPEN_POS[finger])
+                        command_offsets[finger] = target
+                    elif finger_fsms[finger].state == 'OPENING':
+                        command_offsets[finger] = FINGER_OPEN_POS[finger]
+                    elif finger_fsms[finger].state == 'CLOSED':
+                        command_offsets[finger] = FINGER_CLOSE_POS[finger]
             
             # Update hand FSM
             hand_fsm.update()
@@ -370,37 +429,54 @@ def run_smooth_controller(visual_mode="detailed"):
                 # Clear screen
                 os.system('clear')
                 
+                # Mapping from MCP sensors to finger names for display
+                sensor_to_finger = {
+                    "Thumb1": "Thumb",
+                    "Index1": "Index",
+                    "Middle1": "Middle",
+                    "Ring1": "Ring",
+                    "Pinky1": "Pinky"
+                }
+                
                 # Display mode-specific information
                 if visual_mode == "minimal":
                     print(f"Sensor Errors: {sensor_errors} | Motor Errors: {motor_errors}")
-                    for name in FINGER_NAMES:
-                        dist = readings['final'].get(name)
+                    for finger in FINGER_NAMES:
+                        sensor = next((s for s, f in sensor_to_finger.items() if f == finger), None)
+                        dist = readings['final'].get(sensor) if sensor else None
                         dist_str = f"{dist:3d}" if dist is not None else "---"
-                        pos = positions.get(name, 0)
-                        print(f"{name:10s}: Dist={dist_str} Pos={pos:.2f}")
+                        pos = positions.get(finger, 0)
+                        print(f"{finger:10s}: Dist={dist_str} Pos={pos:.2f}")
                 
                 elif visual_mode == "basic":
                     print(f"Sensor Errors: {sensor_errors} | Motor Errors: {motor_errors}")
                     print(f"OK Sensors: {len(readings['ok'])}/{len(SENSORS)}")
                     print(f"Bad Sensors: {readings['bad']}")
                     
-                    for name in FINGER_NAMES:
-                        dist = readings['final'].get(name)
-                        dist_str = f"{dist:3d}" if dist is not None else "---"
-                        raw_dist = readings['raw'].get(name)
-                        raw_str = f"{raw_dist:3d}" if raw_dist is not None else "---"
-                        pos = positions.get(name, 0)
-                        vel = velocities.get(name, 0)
-                        
-                        # Show substitution indicator
-                        if name in readings['substituted']:
-                            flag = "*"
-                        elif name in readings['bad']:
-                            flag = "!"
-                        else:
-                            flag = " "
+                    for finger in FINGER_NAMES:
+                        sensor = next((s for s, f in sensor_to_finger.items() if f == finger), None)
+                        if sensor:
+                            dist = readings['final'].get(sensor)
+                            dist_str = f"{dist:3d}" if dist is not None else "---"
+                            raw_dist = readings['raw'].get(sensor)
+                            raw_str = f"{raw_dist:3d}" if raw_dist is not None else "---"
                             
-                        print(f"{name:10s}{flag}: Raw={raw_str} Dist={dist_str} Pos={pos:.2f} Vel={vel:.2f}")
+                            # Show substitution indicator
+                            if sensor in readings['substituted']:
+                                flag = "*"
+                            elif sensor in readings['bad']:
+                                flag = "!"
+                            else:
+                                flag = " "
+                        else:
+                            dist_str = "---"
+                            raw_str = "---"
+                            flag = "?"
+                            
+                        pos = positions.get(finger, 0)
+                        vel = velocities.get(finger, 0)
+                            
+                        print(f"{finger:10s}{flag}: Raw={raw_str} Dist={dist_str} Pos={pos:.2f} Vel={vel:.2f}")
                 
                 else:  # detailed
                     print(f"---- Smooth Controller Status ----")
@@ -411,33 +487,64 @@ def run_smooth_controller(visual_mode="detailed"):
                     print(f"OK Sensors: {len(readings['ok'])}/{len(SENSORS)}")
                     print(f"Substituted: {readings['substituted']}")
                     print(f"Bad Sensors: {readings['bad']}")
-                    print("\n---- Finger Status ----")
                     
-                    for name in FINGER_NAMES:
-                        dist = readings['final'].get(name)
-                        dist_str = f"{dist:3d}" if dist is not None else "---"
+                    # First show all sensors
+                    print("\n---- Sensor Readings ----")
+                    for name, *_ in SENSORS:
                         raw_dist = readings['raw'].get(name)
                         raw_str = f"{raw_dist:3d}" if raw_dist is not None else "---"
-                        pos = positions.get(name, 0)
-                        vel = velocities.get(name, 0)
+                        final_dist = readings['final'].get(name)
+                        final_str = f"{final_dist:3d}" if final_dist is not None else "---"
                         
                         # Show substitution indicator
                         if name in readings['substituted']:
                             flag = "*"
-                        elif name in readings['bad']:
-                            flag = "!"
-                        else:
-                            flag = " "
-                            
-                        # Get fallback sources
-                        fallback_src = ""
-                        if name in readings['substituted']:
+                            # Get fallback sources
+                            fallback_src = ""
                             for nb in FALLBACK[name]:
                                 if readings['raw'].get(nb) is not None:
                                     fallback_src = f"(using {nb})"
                                     break
+                        elif name in readings['bad']:
+                            flag = "!"
+                            fallback_src = ""
+                        else:
+                            flag = " "
+                            fallback_src = ""
                         
-                        print(f"{name:10s}{flag}: Raw={raw_str} Dist={dist_str} Pos={pos:.2f} Vel={vel:.2f} {fallback_src}")
+                        print(f"{name:10s}{flag}: Raw={raw_str} Final={final_str} {fallback_src}")
+                    
+                    # Then show finger information
+                    print("\n---- Finger Status ----")
+                    for finger in FINGER_NAMES:
+                        sensor = next((s for s, f in sensor_to_finger.items() if f == finger), None)
+                        if sensor:
+                            dist = readings['final'].get(sensor)
+                            dist_str = f"{dist:3d}" if dist is not None else "---"
+                            
+                            # Show substitution indicator
+                            if sensor in readings['substituted']:
+                                flag = "*"
+                                fallback_src = ""
+                                for nb in FALLBACK[sensor]:
+                                    if readings['raw'].get(nb) is not None:
+                                        fallback_src = f"(using {nb})"
+                                        break
+                            elif sensor in readings['bad']:
+                                flag = "!"
+                                fallback_src = ""
+                            else:
+                                flag = " "
+                                fallback_src = ""
+                        else:
+                            dist_str = "---"
+                            flag = "?"
+                            fallback_src = ""
+                        
+                        pos = positions.get(finger, 0)
+                        vel = velocities.get(finger, 0)
+                        
+                        print(f"{finger:10s}{flag}: Dist={dist_str} Pos={pos:.2f} Vel={vel:.2f} {fallback_src}")
                 
                 # Wait before updating display again
                 time.sleep(0.1)
