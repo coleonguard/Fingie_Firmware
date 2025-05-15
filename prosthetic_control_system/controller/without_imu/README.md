@@ -14,7 +14,7 @@ The proximity-only controller is designed to:
 
 ## Controller Implementations
 
-This package includes two different controller implementations:
+This package includes three different controller implementations:
 
 ### 1. Original Threaded Controller
 The `ProximityController` (default) uses a threaded architecture where:
@@ -22,16 +22,30 @@ The `ProximityController` (default) uses a threaded architecture where:
 - The main thread processes control logic and sends motor commands
 - Thread synchronization is used to coordinate these activities
 
-### 2. Simplified Controller (Recommended)
+### 2. Simplified Controller (Reliable)
 The `SimplifiedController` uses a single-loop architecture inspired by `fallback_test.py`:
 - All operations occur in a single thread in a deterministic, sequential order
 - Sensor reading and motor control are strictly separated
 - No thread synchronization overhead or context switching
 - More reliable I2C communication with proximity sensors
+- May produce jerky movements due to direct sensor-to-motor mapping
 
 Use the `--simplified` flag to enable this controller:
 ```bash
 python -m prosthetic_control_system.controller.without_imu.run_controller --simplified
+```
+
+### 3. Smooth Controller (Recommended)
+The `SmoothController` combines reliability with physics-based smoothing:
+- Uses separate threads for sensor reading and motor control
+- Sensor thread follows the exact pattern from fallback_test.py for reliable I2C
+- Motor thread applies physics-based smoothing for natural movements
+- Implements velocity and acceleration limits for smooth transitions
+- Eliminates jerky movements while maintaining reliable operation
+
+Use the `--smooth` flag to enable this controller:
+```bash
+python -m prosthetic_control_system.controller.without_imu.run_controller --smooth
 ```
 
 ## Files
@@ -39,6 +53,7 @@ python -m prosthetic_control_system.controller.without_imu.run_controller --simp
 - `config.py` - Configuration parameters for the proximity-only controller
 - `proximity_controller.py` - Original threaded controller implementation
 - `simplified_controller.py` - Simplified single-loop controller implementation
+- `smooth_controller.py` - Physics-based smooth motion controller
 - `run_controller.py` - Launch script for the controller
 
 ## Usage
@@ -67,6 +82,9 @@ You can customize various parameters:
 # Use simplified architecture (recommended for reliability)
 python -m prosthetic_control_system.controller.without_imu.run_controller --simplified
 
+# Use smooth controller with physics-based motion (recommended)
+python -m prosthetic_control_system.controller.without_imu.run_controller --smooth
+
 # Change control rate
 python -m prosthetic_control_system.controller.without_imu.run_controller --rate 30
 
@@ -92,7 +110,7 @@ python -m prosthetic_control_system.controller.without_imu.run_controller --visu
 python -m prosthetic_control_system.controller.without_imu.run_controller --debug
 
 # Combine options
-python -m prosthetic_control_system.controller.without_imu.run_controller --simplified --rate 15 --visualization minimal
+python -m prosthetic_control_system.controller.without_imu.run_controller --smooth --visualization minimal
 ```
 
 ## Hardware Setup
@@ -193,15 +211,26 @@ The controller includes several safety features to protect the Ability Hand:
      - Processes finger and hand state machines
      - Controls motor positions and torques
 
-   **b) Simplified Controller** (recommended) follows the `fallback_test.py` architecture:
+   **b) Simplified Controller** follows the `fallback_test.py` architecture:
    - Uses a single sequential control loop with no threading
    - Reads all sensors first, then processes control logic, then sends motor commands
    - No concurrent operations or thread synchronization
    - Implements the same deterministic reading order as the successful experiment
    - Uses the same timing parameters (small sleeps between operations)
    - Includes the same fallback substitution logic
+   - More reliable for I2C communication but produces jerky movements
    
-   The simplified approach closely replicates the architecture of `fallback_test.py` which has proven to be more reliable in practice.
+   **c) Smooth Controller** (recommended) combines reliability with smooth motion:
+   - Uses separate threads but with careful design to prevent I2C contention:
+     - Sensor thread exactly replicates the fallback_test.py pattern at 5Hz
+     - Motor control thread runs at 50Hz with physics-based smoothing
+   - Implements physics-based motion control:
+     - Uses velocity limiting to prevent sudden position jumps
+     - Uses acceleration limiting for natural motion transitions
+     - Results in smooth, natural finger movements
+   - Maintains the reliability of the simplified controller while eliminating jerky movements
+   
+   The smooth controller provides the best combination of reliability and natural motion.
 
 When faults occur, they are logged and displayed in the status output. The controller will try to maintain operation with degraded performance rather than failing completely.
 
@@ -240,21 +269,31 @@ If the controller performs sluggishly:
 
 If you're experiencing sensor errors ("all retries failed to get_distance()"), especially when motors are moving:
 
-1. **Use the Simplified Controller** (highly recommended):
+1. **Use the Smooth Controller** (recommended):
+   ```bash
+   python -m prosthetic_control_system.controller.without_imu.run_controller --smooth
+   ```
+   This should resolve most I2C issues while providing smooth motion because:
+   - The sensor thread exactly replicates the reliable pattern from `fallback_test.py`
+   - It separates sensor reading and motor control into different threads with clean boundaries
+   - The physics-based smoothing eliminates jerky movements
+   - It maintains reliable I2C communication even during fast motion
+
+2. **Alternatively, use the Simplified Controller**:
    ```bash
    python -m prosthetic_control_system.controller.without_imu.run_controller --simplified
    ```
-   This should resolve most I2C issues because:
+   This will provide the most reliable I2C communication but with jerky movements because:
    - It follows the same architecture as the working `fallback_test.py` experiment
    - It avoids thread synchronization issues that can cause timing problems
    - It has deterministic timing and simplified error handling
 
-2. If still experiencing issues, try reducing the control rate:
+3. If still experiencing issues, try reducing the control rate:
    ```bash
    python -m prosthetic_control_system.controller.without_imu.run_controller --simplified --rate 10
    ```
 
-3. For hardware debugging, check:
+4. For hardware debugging, check:
    - **Pull-up Resistors**: Verify you have appropriate pull-up resistors on the I2C bus
    - **Power Supply**: Ensure stable power for sensors and multiplexers
    - **Cable Length**: Keep I2C cables short and away from noise sources

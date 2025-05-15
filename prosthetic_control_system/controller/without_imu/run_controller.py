@@ -5,9 +5,10 @@ Launch script for proximity-only control (no IMU).
 This script runs the controller with IMU disabled, suitable for
 testing with only proximity sensors and the Ability Hand.
 
-Two controller implementations are available:
+Three controller implementations are available:
 1. ProximityController: Original threaded implementation
 2. SimplifiedController: Based on fallback_test.py architecture, more reliable
+3. SmoothController: Based on fallback_test.py with physics-based motion smoothing
 """
 
 import os
@@ -35,6 +36,7 @@ if repo_root not in sys.path:
 # Import from this package
 from prosthetic_control_system.controller.without_imu.proximity_controller import ProximityController
 from prosthetic_control_system.controller.without_imu.simplified_controller import SimplifiedController
+from prosthetic_control_system.controller.without_imu.smooth_controller import run_smooth_controller
 from prosthetic_control_system.controller.without_imu.config import DEFAULT_CONFIG
 
 # Global controller instance
@@ -354,6 +356,9 @@ def main():
                       
     parser.add_argument('--simplified', action='store_true',
                       help='Use simplified controller based on fallback_test.py architecture')
+                      
+    parser.add_argument('--smooth', action='store_true',
+                      help='Use smooth controller with physics-based motion')
     
     args = parser.parse_args()
     
@@ -368,10 +373,14 @@ def main():
             motor_kwargs['port'] = args.port
         
         # Create controller with IMU disabled
-        logger.info(f"Creating controller (simulated: {args.simulate}, rate: {args.rate}Hz, simplified: {args.simplified})")
+        logger.info(f"Creating controller (simulated: {args.simulate}, rate: {args.rate}Hz, simplified: {args.simplified}, smooth: {args.smooth})")
         
         # Choose the controller implementation based on args
-        if args.simplified:
+        if args.smooth:
+            logger.info("Using smooth controller with physics-based motion")
+            # Run the smooth controller directly and exit
+            return run_smooth_controller(visual_mode=args.visualization)
+        elif args.simplified:
             logger.info("Using simplified controller based on fallback_test.py architecture")
             controller = SimplifiedController(
                 control_rate=args.rate,
