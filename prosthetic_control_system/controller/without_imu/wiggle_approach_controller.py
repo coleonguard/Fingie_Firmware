@@ -104,12 +104,14 @@ class WiggleApproachController(SimpleOppositionController):
         # Wiggle parameters
         self.wiggle_amplitude = wiggle_amplitude
         self.wiggle_frequency = wiggle_frequency
-        self.wiggle_phase = {finger: random.uniform(0, 2*math.pi) for finger in self.motors.fingers}
         self.wiggle_start_time = time.time()
         self.last_wiggle_time = 0
+        self.next_wiggle_time = 0
         
-        # Minimum time between wiggle updates
-        self.min_wiggle_interval = 0.1  # seconds
+        # Wiggle timing parameters
+        self.wiggle_mean_interval = 0.7  # Mean time between wiggles (seconds)
+        self.wiggle_std_dev = 0.2        # Standard deviation for timing (seconds)
+        self.wiggle_min_interval = 0.2   # Minimum time between wiggles (seconds)
         
         # Motion timing
         self.thumb_move_time = 0.2  # seconds for thumb to move to position
@@ -149,10 +151,28 @@ class WiggleApproachController(SimpleOppositionController):
             # Small delay to let thumb move to opposition first
             time.sleep(0.1)
             
-            # Now calculate wiggle positions with random finger subset
-            if current_time - self.last_wiggle_time >= self.min_wiggle_interval:
+            # Generate random time for next wiggle using Gaussian distribution
+            # centered around 0.7 seconds
+            if self.last_wiggle_time == 0:
+                # First wiggle after entering this state
+                next_wiggle_time = current_time
+            elif not hasattr(self, 'next_wiggle_time'):
+                # Initialize next wiggle time if not set
+                random_interval = max(self.wiggle_min_interval, 
+                                     random.gauss(self.wiggle_mean_interval, self.wiggle_std_dev))
+                self.next_wiggle_time = self.last_wiggle_time + random_interval
+                logger.debug(f"Next wiggle in {random_interval:.2f}s (Gaussian: μ={self.wiggle_mean_interval}s, σ={self.wiggle_std_dev}s)")
+                
+            # Check if it's time for the next wiggle
+            if current_time >= getattr(self, 'next_wiggle_time', current_time):
                 self.last_wiggle_time = current_time
-                elapsed = current_time - self.wiggle_start_time
+                
+                # Schedule next wiggle with Gaussian distribution
+                random_interval = max(self.wiggle_min_interval, 
+                                     random.gauss(self.wiggle_mean_interval, self.wiggle_std_dev))
+                self.next_wiggle_time = current_time + random_interval
+                
+                logger.debug(f"Wiggle now, next in {random_interval:.2f}s (Gaussian: μ={self.wiggle_mean_interval}s, σ={self.wiggle_std_dev}s)")
                 
                 # Get list of non-thumb fingers
                 non_thumb_fingers = [f for f in self.motors.fingers if f != "Thumb"]
@@ -201,15 +221,14 @@ class WiggleApproachController(SimpleOppositionController):
         
         # Add wiggle information if in THUMB_OPPOSING state
         if self.state == "THUMB_OPPOSING":
+            current_time = time.time()
             status["wiggle"] = {
                 "amplitude": self.wiggle_amplitude,
-                "frequency": self.wiggle_frequency,
-                "elapsed": time.time() - self.wiggle_start_time
+                "mean_interval": self.wiggle_mean_interval,
+                "std_dev": self.wiggle_std_dev,
+                "elapsed": current_time - self.wiggle_start_time,
+                "next_wiggle_in": max(0, self.next_wiggle_time - current_time) if hasattr(self, 'next_wiggle_time') else 0
             }
-            
-            for finger in self.motors.fingers:
-                if finger != "Thumb" and finger in status["fingers"]:
-                    status["fingers"][finger]["wiggle_phase"] = self.wiggle_phase[finger]
         
         return status
     
@@ -258,8 +277,7 @@ class WiggleApproachController(SimpleOppositionController):
         if previous_state != "THUMB_OPPOSING" and self.state == "THUMB_OPPOSING":
             self.wiggle_start_time = time.time()
             self.last_wiggle_time = 0
-            # Randomize phases for more natural movement
-            self.wiggle_phase = {finger: random.uniform(0, 2*math.pi) for finger in self.motors.fingers}
+            self.next_wiggle_time = time.time()  # Start wiggling immediately after entering state
 
 
 def signal_handler(sig, frame):
@@ -308,6 +326,12 @@ def main():
     
     parser.add_argument('--wiggle-frequency', type=float, default=0.5,
                       help='Frequency of wiggle motion in Hz (default: 0.5)')
+                      
+    parser.add_argument('--wiggle-interval', type=float, default=0.7,
+                      help='Mean time between wiggles in seconds (default: 0.7)')
+                      
+    parser.add_argument('--wiggle-stddev', type=float, default=0.2,
+                      help='Standard deviation for wiggle timing in seconds (default: 0.2)')
     
     parser.add_argument('--debug', action='store_true',
                       help='Enable debug logging')

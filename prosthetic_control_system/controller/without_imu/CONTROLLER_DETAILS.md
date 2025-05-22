@@ -98,6 +98,10 @@ Carefully manages shared I2C bus between sensors and motors:
 | thumb_move_time | Time allowed for thumb movement | 0.2 s |
 | finger_move_time | Time allowed for finger movement | 0.2 s |
 | readings_required | Consecutive readings for state change | 3 |
+| wiggle_amplitude | Maximum amplitude of wiggle motion | 5° |
+| wiggle_mean_interval | Mean time between wiggles | 0.7 s |
+| wiggle_std_dev | Standard deviation for wiggle timing | 0.2 s |
+| wiggle_min_interval | Minimum time between wiggles | 0.2 s |
 
 ## Implementation Details
 
@@ -120,17 +124,26 @@ Carefully manages shared I2C bus between sensors and motors:
 
 ### Wiggle Implementation (wiggle_approach_controller only)
 
-1. Random finger subset selection:
-   - Randomly selects which fingers to move at each update
-   - Creates more natural, unpredictable micro-movements
+1. Gaussian Random Timing:
+   - Uses a normal distribution centered around 0.7 seconds for wiggle intervals
+   - Standard deviation of 0.2 seconds creates natural timing variation
+   - Ensures minimum interval of 0.2 seconds between wiggles
+   - Creates unpredictable, human-like timing pattern
 
-2. Gaussian distribution:
-   - Uses statistical normal distribution for positions
+2. Random Finger Subset Selection:
+   - Randomly selects which fingers to move at each wiggle
+   - Number of fingers ranges from 1 to all available non-thumb fingers
+   - Each wiggle uses a different combination of fingers
+
+3. Gaussian Position Distribution:
+   - Uses statistical normal distribution for finger positions
+   - Standard deviation scaled by amplitude parameter
    - Creates natural variance in movement amplitudes
 
-3. Partial correlation:
+4. Partial Correlation:
    - 60% correlation between finger movements
    - Mimics natural coupling of human hand motion
+   - Ensures movements appear coordinated but not identical
 
 ## Tuning Guidelines
 
