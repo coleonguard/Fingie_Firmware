@@ -215,20 +215,30 @@ class WiggleApproachController(SimpleOppositionController):
         """Update controller state based on sensor readings"""
         previous_state = self.state
         
-        # Debounce non-100mm readings - require two consecutive non-100mm readings
+        # Debounce non-100mm readings - require two consecutive non-100mm readings that aren't identical
         # For finger distance
         valid_finger_reading = True
-        if finger_distance < 100 and self.prev_finger_distance >= 100:
-            # First non-100 reading, don't consider valid yet
-            valid_finger_reading = False
-            logger.debug(f"First non-100 finger reading: {finger_distance:.1f}mm - waiting for confirmation")
+        if finger_distance < 100:
+            if self.prev_finger_distance >= 100:
+                # First non-100 reading, don't consider valid yet
+                valid_finger_reading = False
+                logger.debug(f"First non-100 finger reading: {finger_distance:.1f}mm - waiting for confirmation")
+            elif finger_distance == self.prev_finger_distance:
+                # Two identical non-100 readings in a row - likely a glitch
+                valid_finger_reading = False
+                logger.debug(f"Identical consecutive finger readings: {finger_distance:.1f}mm - likely a glitch")
         
         # For thumb distance
         valid_thumb_reading = True
-        if thumb_distance < 100 and self.prev_thumb_distance >= 100:
-            # First non-100 reading, don't consider valid yet
-            valid_thumb_reading = False
-            logger.debug(f"First non-100 thumb reading: {thumb_distance:.1f}mm - waiting for confirmation")
+        if thumb_distance < 100:
+            if self.prev_thumb_distance >= 100:
+                # First non-100 reading, don't consider valid yet
+                valid_thumb_reading = False
+                logger.debug(f"First non-100 thumb reading: {thumb_distance:.1f}mm - waiting for confirmation")
+            elif thumb_distance == self.prev_thumb_distance:
+                # Two identical non-100 readings in a row - likely a glitch
+                valid_thumb_reading = False
+                logger.debug(f"Identical consecutive thumb readings: {thumb_distance:.1f}mm - likely a glitch")
         
         # Save current readings as previous for next iteration
         self.prev_finger_distance = finger_distance
