@@ -125,38 +125,63 @@ class WiggleApproachController(SimpleOppositionController):
             super()._move_fingers()
                 
         elif self.state == "THUMB_OPPOSING":
-            # First ensure thumb is in opposition position
-            self.target_positions["Thumb"] = self.thumb_opposition_angle
+            # First ensure thumb is in opposition position using ThumbRotate joint
+            # Note: ThumbRotate is the thumb rotator which controls opposition
+            self.target_positions["ThumbRotate"] = self.thumb_opposition_angle
             try:
-                self.motors.set_position("Thumb", self.thumb_opposition_angle)
-                self.current_positions["Thumb"] = self.thumb_opposition_angle
+                # Set the thumb rotator to opposition position
+                self.motors.set_position("ThumbRotate", self.thumb_opposition_angle)
+                self.current_positions["ThumbRotate"] = self.thumb_opposition_angle
+                
+                # Set minimal flexion for the thumb flexor
+                self.motors.set_position("Thumb", 5.0)  # Minimal flexion
+                self.current_positions["Thumb"] = 5.0
             except Exception as e:
-                logger.error(f"Error setting position for Thumb: {e}")
+                logger.error(f"Error setting position for thumb: {e}")
             
             # Small delay to let thumb move to opposition first
             time.sleep(0.1)
             
-            # Now calculate wiggle positions for other fingers
+            # Now calculate wiggle positions with random finger subset
             if current_time - self.last_wiggle_time >= self.min_wiggle_interval:
                 self.last_wiggle_time = current_time
                 elapsed = current_time - self.wiggle_start_time
                 
-                # Calculate wiggle angles for each finger
-                for finger in self.motors.fingers:
-                    if finger != "Thumb":
-                        # Base wiggle on sine wave with finger-specific phase
-                        phase = self.wiggle_phase[finger]
-                        amplitude = self.wiggle_amplitude
-                        
-                        # Calculate wiggle angle - oscillate around 0 position
-                        wiggle_angle = amplitude * math.sin(2 * math.pi * self.wiggle_frequency * elapsed + phase)
-                        self.target_positions[finger] = max(0, wiggle_angle)  # Prevent negative angles
-                        
-                        try:
-                            self.motors.set_position(finger, self.target_positions[finger])
-                            self.current_positions[finger] = self.target_positions[finger]
-                        except Exception as e:
-                            logger.error(f"Error setting position for {finger}: {e}")
+                # Get list of non-thumb fingers
+                non_thumb_fingers = [f for f in self.motors.fingers if f != "Thumb"]
+                
+                # Randomly select a subset of fingers to move this time
+                # Number of fingers to move is random between 1 and the total number
+                num_fingers_to_move = random.randint(1, len(non_thumb_fingers))
+                fingers_to_move = random.sample(non_thumb_fingers, num_fingers_to_move)
+                
+                logger.debug(f"Moving {num_fingers_to_move} fingers: {fingers_to_move}")
+                
+                # Calculate wiggle angles for selected fingers using Gaussian distribution
+                for finger in fingers_to_move:
+                    # Use a Gaussian distribution for more natural movement
+                    base_position = 0.0  # Base position (open)
+                    std_dev = self.wiggle_amplitude / 3.0  # 3-sigma rule
+                    
+                    # Generate random wiggle with partial correlation between fingers
+                    master_random = random.gauss(0, 1)  # Shared randomness component
+                    correlation = 0.6  # Correlation factor
+                    
+                    # Blend master random with finger-specific random
+                    finger_random = (correlation * master_random + 
+                                    (1-correlation) * random.gauss(0, 1))
+                    
+                    # Scale to desired amplitude and shift to ensure positive values
+                    wiggle_angle = base_position + (std_dev * finger_random)
+                    wiggle_angle = max(0, min(wiggle_angle, self.wiggle_amplitude * 2))
+                    
+                    self.target_positions[finger] = wiggle_angle
+                    
+                    try:
+                        self.motors.set_position(finger, self.target_positions[finger])
+                        self.current_positions[finger] = self.target_positions[finger]
+                    except Exception as e:
+                        logger.error(f"Error setting position for {finger}: {e}")
                             
         elif self.state == "GRIP_CLOSING":
             # Use the safe grip closing from parent class

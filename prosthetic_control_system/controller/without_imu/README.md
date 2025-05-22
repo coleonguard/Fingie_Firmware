@@ -48,6 +48,7 @@ Options:
    - GRIP_CLOSING: All fingers closed to specified angle
 
 4. **Thumb Safety Features**:
+   - Proper control of both thumb joints (ThumbRotate for opposition, Thumb for flexion)
    - Sequential movement to prevent thumb collisions with other fingers
    - Thumb always positions first before other fingers move
    - Non-thumb fingers always open first before thumb returns
@@ -71,9 +72,10 @@ Options:
 #### Additional Features
 
 1. **Enhanced Tactile Feedback**:
-   - Small, randomized finger movements during the approach phase
-   - Configurable wiggle amplitude and frequency
-   - Each finger moves with a different phase for more natural motion
+   - Small, Gaussian-distributed random finger movements during approach
+   - Randomly selected subset of fingers move at each update
+   - Partially correlated movement between fingers (60% correlation)
+   - Natural micro-movements that mimic human hand tremor patterns
 
 2. **I2C Bus Handling with Wiggle**:
    - Extends the base controller's I2C bus contention handling
