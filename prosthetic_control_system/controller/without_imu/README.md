@@ -25,7 +25,7 @@ Options:
 - `--port PORT`: Serial port for Ability Hand (default: auto-detect)
 - `--proximity-rate PROXIMITY_RATE`: Proximity sensor sampling rate in Hz (default: 5)
 - `--finger-close FINGER_CLOSE`: Finger closure angle in degrees (default: 30.0)
-- `--thumb-oppose THUMB_OPPOSE`: Thumb opposition angle in degrees (default: 30.0)
+- `--thumb-oppose THUMB_OPPOSE`: Thumb opposition angle in degrees (default: 100.0, max rotation)
 - `--finger-threshold FINGER_THRESHOLD`: Finger detection distance threshold in mm (default: 100.0)
 - `--thumb-threshold THUMB_THRESHOLD`: Thumb detection distance threshold in mm (default: 50.0)
 - `--debug`: Enable debug logging
@@ -48,6 +48,7 @@ Options:
    - GRIP_CLOSING: All fingers closed to specified angle
 
 4. **Thumb Safety Features**:
+   - Full 100° rotation of thumb for maximum opposition
    - Proper control of both thumb joints (ThumbRotate for opposition, Thumb for flexion)
    - Sequential movement to prevent thumb collisions with other fingers
    - Thumb always positions first before other fingers move

@@ -125,13 +125,14 @@ class WiggleApproachController(SimpleOppositionController):
             super()._move_fingers()
                 
         elif self.state == "THUMB_OPPOSING":
-            # First ensure thumb is in opposition position using ThumbRotate joint
+            # First ensure thumb is in full opposition position using ThumbRotate joint
             # Note: ThumbRotate is the thumb rotator which controls opposition
-            self.target_positions["ThumbRotate"] = self.thumb_opposition_angle
+            max_rotation = 100.0  # Maximum rotation value for Ability Hand
+            self.target_positions["ThumbRotate"] = max_rotation
             try:
-                # Set the thumb rotator to opposition position
-                self.motors.set_position("ThumbRotate", self.thumb_opposition_angle)
-                self.current_positions["ThumbRotate"] = self.thumb_opposition_angle
+                # Set the thumb rotator to maximum opposition position
+                self.motors.set_position("ThumbRotate", max_rotation)
+                self.current_positions["ThumbRotate"] = max_rotation
                 
                 # Set minimal flexion for the thumb flexor
                 self.motors.set_position("Thumb", 5.0)  # Minimal flexion
@@ -253,8 +254,8 @@ def main():
     parser.add_argument('--finger-close', type=float, default=30.0,
                       help='Finger closure angle in degrees (default: 30.0)')
     
-    parser.add_argument('--thumb-oppose', type=float, default=30.0,
-                      help='Thumb opposition angle in degrees (default: 30.0)')
+    parser.add_argument('--thumb-oppose', type=float, default=100.0,
+                      help='Thumb opposition angle in degrees (default: 100.0, max rotation)')
     
     parser.add_argument('--finger-threshold', type=float, default=100.0,
                       help='Finger detection distance threshold in mm (default: 100.0)')

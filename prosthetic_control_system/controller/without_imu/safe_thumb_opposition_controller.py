@@ -336,13 +336,15 @@ class SimpleOppositionController:
                 
         elif self.state == "THUMB_OPPOSING":
             # Position thumb in opposition first using the thumb rotator joint
-            self.target_positions["ThumbRotate"] = self.thumb_opposition_angle
+            # Use maximum rotation (100°) for full opposition
+            max_rotation = 100.0  # Maximum rotation value for Ability Hand
+            self.target_positions["ThumbRotate"] = max_rotation
             self.target_positions["Thumb"] = 5.0  # Minimal flexion for the thumb flexor
             
             try:
-                # Set the thumb rotator to opposition position
-                self.motors.set_position("ThumbRotate", self.thumb_opposition_angle)
-                self.current_positions["ThumbRotate"] = self.thumb_opposition_angle
+                # Set the thumb rotator to maximum opposition position
+                self.motors.set_position("ThumbRotate", max_rotation)
+                self.current_positions["ThumbRotate"] = max_rotation
                 
                 # Set minimal flexion for thumb flexor
                 self.motors.set_position("Thumb", 5.0)
@@ -364,17 +366,18 @@ class SimpleOppositionController:
                         logger.error(f"Error setting position for {finger}: {e}")
                     
         elif self.state == "GRIP_CLOSING":
-            # Keep thumb in opposition position
-            self.target_positions["ThumbRotate"] = self.thumb_opposition_angle
+            # Keep thumb in maximum opposition position
+            max_rotation = 100.0  # Maximum rotation value for Ability Hand
+            self.target_positions["ThumbRotate"] = max_rotation
             self.target_positions["Thumb"] = 5.0  # Minimal flexion
             
-            # Verify thumb rotator is in opposition before closing other fingers
-            if self.current_positions.get("ThumbRotate", 0) < self.thumb_opposition_angle * 0.8:
+            # Verify thumb rotator is in full opposition before closing other fingers
+            if self.current_positions.get("ThumbRotate", 0) < max_rotation * 0.8:
                 # Ensure thumb is positioned first
                 try:
-                    self.motors.set_position("ThumbRotate", self.thumb_opposition_angle)
+                    self.motors.set_position("ThumbRotate", max_rotation)
                     self.motors.set_position("Thumb", 5.0)  # Minimal flexion
-                    self.current_positions["ThumbRotate"] = self.thumb_opposition_angle
+                    self.current_positions["ThumbRotate"] = max_rotation
                     self.current_positions["Thumb"] = 5.0
                     # Wait for thumb to reach position
                     time.sleep(0.2)
@@ -561,8 +564,8 @@ def main():
     parser.add_argument('--finger-close', type=float, default=30.0,
                       help='Finger closure angle in degrees (default: 30.0)')
     
-    parser.add_argument('--thumb-oppose', type=float, default=30.0,
-                      help='Thumb opposition angle in degrees (default: 30.0)')
+    parser.add_argument('--thumb-oppose', type=float, default=100.0,
+                      help='Thumb opposition angle in degrees (default: 100.0, max rotation)')
     
     parser.add_argument('--finger-threshold', type=float, default=100.0,
                       help='Finger detection distance threshold in mm (default: 100.0)')
