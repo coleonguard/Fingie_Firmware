@@ -1,1 +1,3 @@
-# Unified controller and state machines package
+"""
+Prosthetic control system controller package.
+"""
