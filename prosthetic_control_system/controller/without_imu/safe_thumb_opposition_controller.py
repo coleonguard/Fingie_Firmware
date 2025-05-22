@@ -151,6 +151,10 @@ class SimpleOppositionController:
         self.release_detection_count = 0
         self.readings_required = 3  # Consecutive readings needed
         
+        # Previous readings for non-100mm debouncing
+        self.prev_finger_distance = 100
+        self.prev_thumb_distance = 100
+        
         # Thread control
         self.running = False
         self.shutdown_event = threading.Event()
@@ -234,6 +238,29 @@ class SimpleOppositionController:
         
         # Only allow state transitions after minimum dwell time
         if time_in_state < self.min_dwell_time:
+            return
+            
+        # Debounce non-100mm readings - require two consecutive non-100mm readings
+        # For finger distance
+        valid_finger_reading = True
+        if finger_distance < 100 and self.prev_finger_distance >= 100:
+            # First non-100 reading, don't consider valid yet
+            valid_finger_reading = False
+            logger.debug(f"First non-100 finger reading: {finger_distance:.1f}mm - waiting for confirmation")
+        
+        # For thumb distance
+        valid_thumb_reading = True
+        if thumb_distance < 100 and self.prev_thumb_distance >= 100:
+            # First non-100 reading, don't consider valid yet
+            valid_thumb_reading = False
+            logger.debug(f"First non-100 thumb reading: {thumb_distance:.1f}mm - waiting for confirmation")
+        
+        # Save current readings as previous for next iteration
+        self.prev_finger_distance = finger_distance
+        self.prev_thumb_distance = thumb_distance
+        
+        # If readings aren't valid, don't proceed with state update
+        if not valid_finger_reading or not valid_thumb_reading:
             return
         
         # State transitions with debouncing

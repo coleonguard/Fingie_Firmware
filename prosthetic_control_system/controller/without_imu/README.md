@@ -35,7 +35,11 @@ Options:
 1. **Robust against sensor errors**:
    - Uses any working finger sensor to trigger thumb opposition
    - Works even if some sensors are positioned incorrectly
-   - Filters out sensor glitches with debouncing and hysteresis
+   - Double debouncing mechanism:
+     - Requires two consecutive non-100mm readings to consider a detection valid
+     - Further requires 3 consecutive readings below threshold for state changes
+   - Prevents false triggers from single erroneous readings
+   - Uses hysteresis to prevent oscillation at threshold boundaries
 
 2. **I2C Bus Contention Handling**:
    - Separates sensor reading and motor control phases

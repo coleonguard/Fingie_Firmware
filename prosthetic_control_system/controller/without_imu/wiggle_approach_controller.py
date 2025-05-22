@@ -114,6 +114,10 @@ class WiggleApproachController(SimpleOppositionController):
         # Set a longer motion phase for wiggle motions
         self.motion_phase_duration = 1.2  # seconds
         
+        # Previous readings for non-100mm debouncing
+        self.prev_finger_distance = 100
+        self.prev_thumb_distance = 100
+        
         logger.info(f"Wiggle approach controller initialized with amplitude={wiggle_amplitude}°, frequency={wiggle_frequency}Hz")
     
     def _move_fingers(self):
@@ -211,8 +215,32 @@ class WiggleApproachController(SimpleOppositionController):
         """Update controller state based on sensor readings"""
         previous_state = self.state
         
-        # Update state using parent method
-        super()._update_state(finger_distance, thumb_distance)
+        # Debounce non-100mm readings - require two consecutive non-100mm readings
+        # For finger distance
+        valid_finger_reading = True
+        if finger_distance < 100 and self.prev_finger_distance >= 100:
+            # First non-100 reading, don't consider valid yet
+            valid_finger_reading = False
+            logger.debug(f"First non-100 finger reading: {finger_distance:.1f}mm - waiting for confirmation")
+        
+        # For thumb distance
+        valid_thumb_reading = True
+        if thumb_distance < 100 and self.prev_thumb_distance >= 100:
+            # First non-100 reading, don't consider valid yet
+            valid_thumb_reading = False
+            logger.debug(f"First non-100 thumb reading: {thumb_distance:.1f}mm - waiting for confirmation")
+        
+        # Save current readings as previous for next iteration
+        self.prev_finger_distance = finger_distance
+        self.prev_thumb_distance = thumb_distance
+        
+        # If readings aren't valid, don't proceed with state update
+        if not valid_finger_reading or not valid_thumb_reading:
+            return
+            
+        # Update state using parent method, but use super's parent method to avoid calling our modified version
+        # that already has the non-100mm debouncing
+        SimpleOppositionController._update_state(self, finger_distance, thumb_distance)
         
         # If we just entered THUMB_OPPOSING state, reset wiggle parameters
         if previous_state != "THUMB_OPPOSING" and self.state == "THUMB_OPPOSING":
