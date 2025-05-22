@@ -93,7 +93,11 @@ class SimpleOppositionController:
         self.thumb_threshold = thumb_threshold
         self.hysteresis = 20.0  # mm
         self.min_dwell_time = 0.3  # seconds
-        self.motion_phase_duration = 1.0  # seconds (increased to accommodate sequential movements)
+        
+        # Motion timing
+        self.thumb_move_time = 0.2  # seconds for thumb to move to position
+        self.finger_move_time = 0.2  # seconds for fingers to move to position
+        self.motion_phase_duration = 0.4  # Just long enough for sequential movement
         
         # Set up proximity sampling rate (2x control rate by default for smoother readings)
         if proximity_rate is None:
@@ -357,8 +361,8 @@ class SimpleOppositionController:
                     except Exception as e:
                         logger.error(f"Error setting position for {finger}: {e}")
             
-            # Small delay to let fingers move first
-            time.sleep(0.2)
+            # Small delay to let fingers move first - just enough for safety
+            time.sleep(self.finger_move_time)
             
             # Now move thumb (both flexor and rotator)
             self.target_positions["Thumb"] = 0.0
@@ -389,8 +393,8 @@ class SimpleOppositionController:
             except Exception as e:
                 logger.error(f"Error setting position for thumb: {e}")
             
-            # Small delay to let thumb move to opposition first
-            time.sleep(0.2)
+            # Small delay to let thumb move to opposition first - minimal but effective
+            time.sleep(self.thumb_move_time)
             
             # Now set other fingers
             for finger in self.motors.fingers:
@@ -416,8 +420,8 @@ class SimpleOppositionController:
                     self.motors.set_position("Thumb", 5.0)  # Minimal flexion
                     self.current_positions["ThumbRotate"] = max_rotation
                     self.current_positions["Thumb"] = 5.0
-                    # Wait for thumb to reach position
-                    time.sleep(0.2)
+                    # Wait for thumb to reach position - just enough time to be effective
+                    time.sleep(self.thumb_move_time)
                 except Exception as e:
                     logger.error(f"Error setting position for thumb: {e}")
             

@@ -111,8 +111,10 @@ class WiggleApproachController(SimpleOppositionController):
         # Minimum time between wiggle updates
         self.min_wiggle_interval = 0.1  # seconds
         
-        # Set a longer motion phase for wiggle motions
-        self.motion_phase_duration = 1.2  # seconds
+        # Motion timing
+        self.thumb_move_time = 0.2  # seconds for thumb to move to position
+        self.finger_move_time = 0.2  # seconds for fingers to move to position
+        self.motion_phase_duration = 0.4  # Optimized for minimum necessary time
         
         # Previous readings for non-100mm debouncing
         self.prev_finger_distance = 100
