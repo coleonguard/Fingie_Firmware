@@ -93,7 +93,7 @@ class SimpleOppositionController:
         self.thumb_threshold = thumb_threshold
         self.hysteresis = 20.0  # mm
         self.min_dwell_time = 0.3  # seconds
-        self.motion_phase_duration = 0.5  # seconds
+        self.motion_phase_duration = 1.0  # seconds (increased to accommodate sequential movements)
         
         # Set up proximity sampling rate (2x control rate by default for smoother readings)
         if proximity_rate is None:
@@ -305,31 +305,78 @@ class SimpleOppositionController:
     def _move_fingers(self):
         """Execute finger movements based on current state"""
         if self.state == "IDLE":
-            # Open all fingers
-            for finger in self.motors.fingers:
-                self.target_positions[finger] = 0.0
-                
-        elif self.state == "THUMB_OPPOSING":
-            # Position thumb in opposition, keep others open
-            self.target_positions["Thumb"] = self.thumb_opposition_angle
+            # When returning to IDLE, first open non-thumb fingers, then thumb
+            # This prevents the thumb from colliding with other fingers during return
             for finger in self.motors.fingers:
                 if finger != "Thumb":
                     self.target_positions[finger] = 0.0
+            
+            # Apply non-thumb finger movements first
+            for finger, position in self.target_positions.items():
+                if finger != "Thumb":
+                    try:
+                        self.motors.set_position(finger, position)
+                        self.current_positions[finger] = position
+                    except Exception as e:
+                        logger.error(f"Error setting position for {finger}: {e}")
+            
+            # Small delay to let fingers move first
+            time.sleep(0.2)
+            
+            # Now move thumb
+            self.target_positions["Thumb"] = 0.0
+            try:
+                self.motors.set_position("Thumb", 0.0)
+                self.current_positions["Thumb"] = 0.0
+            except Exception as e:
+                logger.error(f"Error setting position for Thumb: {e}")
+                
+        elif self.state == "THUMB_OPPOSING":
+            # Position thumb in opposition first, before other fingers move
+            self.target_positions["Thumb"] = self.thumb_opposition_angle
+            try:
+                self.motors.set_position("Thumb", self.thumb_opposition_angle)
+                self.current_positions["Thumb"] = self.thumb_opposition_angle
+            except Exception as e:
+                logger.error(f"Error setting position for Thumb: {e}")
+            
+            # Small delay to let thumb move to opposition first
+            time.sleep(0.2)
+            
+            # Now set other fingers
+            for finger in self.motors.fingers:
+                if finger != "Thumb":
+                    self.target_positions[finger] = 0.0
+                    try:
+                        self.motors.set_position(finger, 0.0)
+                        self.current_positions[finger] = 0.0
+                    except Exception as e:
+                        logger.error(f"Error setting position for {finger}: {e}")
                     
         elif self.state == "GRIP_CLOSING":
-            # Maintain thumb opposition, close other fingers
+            # Keep thumb in opposition position
             self.target_positions["Thumb"] = self.thumb_opposition_angle
+            
+            # Verify thumb is in opposition before closing other fingers
+            if self.current_positions["Thumb"] < self.thumb_opposition_angle * 0.8:
+                # Ensure thumb is positioned first
+                try:
+                    self.motors.set_position("Thumb", self.thumb_opposition_angle)
+                    self.current_positions["Thumb"] = self.thumb_opposition_angle
+                    # Wait for thumb to reach position
+                    time.sleep(0.2)
+                except Exception as e:
+                    logger.error(f"Error setting position for Thumb: {e}")
+            
+            # Now close other fingers
             for finger in self.motors.fingers:
                 if finger != "Thumb":
                     self.target_positions[finger] = self.finger_close_angle
-        
-        # Apply all movements at once to minimize I2C bus usage
-        for finger, position in self.target_positions.items():
-            try:
-                self.motors.set_position(finger, position)
-                self.current_positions[finger] = position
-            except Exception as e:
-                logger.error(f"Error setting position for {finger}: {e}")
+                    try:
+                        self.motors.set_position(finger, self.finger_close_angle)
+                        self.current_positions[finger] = self.finger_close_angle
+                    except Exception as e:
+                        logger.error(f"Error setting position for {finger}: {e}")
     
     def start(self):
         """Start the controller"""
@@ -372,16 +419,27 @@ class SimpleOppositionController:
             except Exception as e:
                 logger.error(f"Error joining thread: {e}")
         
-        # Ensure all fingers are in open position
+        # Ensure all fingers are opened safely (non-thumb fingers first)
         try:
             if self.motors:
+                # First open all non-thumb fingers
                 for finger in self.motors.fingers:
-                    try:
-                        self.motors.set_position(finger, 0.0)
-                    except Exception as e:
-                        logger.error(f"Error opening finger {finger}: {e}")
+                    if finger != "Thumb":
+                        try:
+                            self.motors.set_position(finger, 0.0)
+                        except Exception as e:
+                            logger.error(f"Error opening finger {finger}: {e}")
                 
                 # Give motors time to move
+                time.sleep(0.5)
+                
+                # Then open thumb last to prevent collision
+                try:
+                    self.motors.set_position("Thumb", 0.0)
+                except Exception as e:
+                    logger.error(f"Error opening thumb: {e}")
+                
+                # Give thumb time to move
                 time.sleep(0.5)
         except Exception as e:
             logger.error(f"Error opening fingers: {e}")

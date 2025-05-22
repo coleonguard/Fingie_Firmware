@@ -46,6 +46,12 @@ Options:
    - THUMB_OPPOSING: Thumb positioned, waiting for thumb proximity
    - GRIP_CLOSING: All fingers closed to specified angle
 
+4. **Thumb Safety Features**:
+   - Sequential movement to prevent thumb collisions with other fingers
+   - Thumb always positions first before other fingers move
+   - Non-thumb fingers always open first before thumb returns
+   - Verification that thumb is in position before allowing finger closure
+
 ### 2. Experiment Controller
 
 `run_experiment.py` implements an experimental controller that makes fingers twitch instead of fully closing when objects are detected.
