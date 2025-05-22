@@ -4,18 +4,19 @@ This directory contains controllers for the prosthetic control system that do no
 
 ## Controllers
 
-### 1. Simple Opposition Controller
+### 1. Safe Thumb Opposition Controller
 
-`simple_opposition_controller.py` implements a basic, robust control approach that:
+`safe_thumb_opposition_controller.py` implements a robust control approach that:
 
 1. Rotates the thumb to opposition position when ANY finger detects an object
 2. Closes the other fingers when the thumb detects an object
 3. Handles I2C bus contention by separating sensor reading and motor control phases
+4. Ensures thumb never collides with other fingers through careful movement sequencing
 
 #### Usage
 
 ```bash
-python3 -m prosthetic_control_system.controller.without_imu.simple_opposition_controller [options]
+python3 -m prosthetic_control_system.controller.without_imu.safe_thumb_opposition_controller [options]
 ```
 
 Options:
@@ -52,7 +53,38 @@ Options:
    - Non-thumb fingers always open first before thumb returns
    - Verification that thumb is in position before allowing finger closure
 
-### 2. Experiment Controller
+### 2. Wiggle Approach Controller
+
+`wiggle_approach_controller.py` extends the Safe Thumb Opposition Controller by adding wiggle motion during the approach phase for enhanced tactile feedback.
+
+#### Usage
+
+```bash
+python3 -m prosthetic_control_system.controller.without_imu.wiggle_approach_controller [options]
+```
+
+Options:
+- All options from the Safe Thumb Opposition Controller, plus:
+- `--wiggle-amplitude AMPLITUDE`: Maximum amplitude of wiggle motion in degrees (default: 5.0)
+- `--wiggle-frequency FREQUENCY`: Frequency of wiggle motion in Hz (default: 0.5)
+
+#### Additional Features
+
+1. **Enhanced Tactile Feedback**:
+   - Small, randomized finger movements during the approach phase
+   - Configurable wiggle amplitude and frequency
+   - Each finger moves with a different phase for more natural motion
+
+2. **I2C Bus Handling with Wiggle**:
+   - Extends the base controller's I2C bus contention handling
+   - Manages the additional motor commands required for wiggling
+   - Balances sensor reading and motor control phases
+
+3. **Maintains Safety**:
+   - Preserves all thumb safety features from the base controller
+   - Ensures wiggle motion never interferes with safe thumb positioning
+
+### 3. Experiment Controller
 
 `run_experiment.py` implements an experimental controller that makes fingers twitch instead of fully closing when objects are detected.
 
