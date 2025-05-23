@@ -261,6 +261,10 @@ class IdleWiggleGraspController:
             logger.info(f"🔄 SWITCHING TO MOVEMENT PHASE - duration: {phase_duration:.2f}s")
             print(f"\n🔄 SWITCHING TO MOVEMENT PHASE - duration: {phase_duration:.2f}s")
             
+            # If in IDLE state, select new random fingers to wiggle for this movement phase
+            if self.state == "IDLE":
+                self._select_random_fingers()
+            
         else:
             # Switch to sensor phase
             self.current_phase = "SENSOR_PHASE"
@@ -430,10 +434,9 @@ class IdleWiggleGraspController:
     
     def _execute_idle_wiggle(self):
         """Execute wiggle behavior during IDLE state"""
-        # Check if we need to select new random fingers
-        if self.wiggle_count % 5 == 0 and random.random() < 0.3:  # 30% chance every 5 wiggles
-            self._select_random_fingers()
-            
+        # Random finger selection is now done in the _toggle_phase method
+        # when switching to the movement phase
+        
         # Update wiggle targets with uniform random movement
         self._update_wiggle_targets()
         
