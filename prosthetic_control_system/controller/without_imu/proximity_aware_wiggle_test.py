@@ -70,9 +70,8 @@ class ProximityAwareWiggleController:
         proximity_rate=None,
         use_simulated_motors=False,
         motor_interface_kwargs=None,
-        phase_mean_duration=1.0,
-        phase_std_dev=0.2,
         min_phase_duration=0.5,
+        max_phase_duration=2.0,
         max_angle=30.0,
         wiggle_speed=5.0,
         min_fingers=1,
@@ -99,9 +98,8 @@ class ProximityAwareWiggleController:
         # Save parameters
         self.control_rate = control_rate
         self.control_interval = 1.0 / control_rate
-        self.phase_mean_duration = phase_mean_duration
-        self.phase_std_dev = phase_std_dev
         self.min_phase_duration = min_phase_duration
+        self.max_phase_duration = max_phase_duration
         self.max_angle = max_angle
         self.wiggle_speed = wiggle_speed
         self.min_fingers = min_fingers
@@ -175,15 +173,13 @@ class ProximityAwareWiggleController:
         self.shutdown_event = threading.Event()
         self.thread = None
         
-        logger.info(f"Proximity-aware wiggle controller initialized with phase_mean_duration={phase_mean_duration}s, std_dev={phase_std_dev}s")
+        logger.info(f"Proximity-aware wiggle controller initialized with phase_duration={min_phase_duration}-{max_phase_duration}s (uniform random)")
     
     def _generate_phase_duration(self):
-        """Generate random phase duration using Gaussian distribution"""
-        # Generate random duration using Gaussian distribution
-        duration = random.gauss(self.phase_mean_duration, self.phase_std_dev)
-        
-        # Apply bounds
-        duration = max(self.min_phase_duration, duration)
+        """Generate random phase duration using uniform distribution"""
+        # Generate random duration using uniform distribution
+        # Use instance variables for min/max duration
+        duration = random.uniform(self.min_phase_duration, self.max_phase_duration)
         
         return duration
     
@@ -364,11 +360,9 @@ class ProximityAwareWiggleController:
             finger_random = (correlation * master_random + 
                            (1-correlation) * random.gauss(0, 1))
             
-            # Calculate movement amount (base movement + random component)
-            # Scale random component to be smaller than base movement
-            base_movement = self.wiggle_speed * current_dir
-            random_component = finger_random * (self.wiggle_speed * 0.5)
-            movement = base_movement + random_component
+            # Use uniform random movement between 0-10 degrees in the current direction
+            max_movement = 10.0  # Fixed 10 degrees maximum movement
+            movement = random.uniform(0, max_movement) * current_dir
             
             # Calculate new target position
             new_target = current_pos + movement
@@ -537,17 +531,14 @@ def main():
     parser.add_argument('--proximity-rate', type=int, default=5,
                       help='Proximity sensor sampling rate in Hz (default: 5)')
     
-    parser.add_argument('--phase-mean', type=float, default=1.0,
-                      help='Mean duration of each phase in seconds (default: 1.0)')
-    
-    parser.add_argument('--phase-std', type=float, default=0.2,
-                      help='Standard deviation of phase duration in seconds (default: 0.2)')
-    
     parser.add_argument('--min-phase', type=float, default=0.5,
                       help='Minimum phase duration in seconds (default: 0.5)')
     
-    parser.add_argument('--max-angle', type=float, default=30.0,
-                      help='Maximum finger angle in degrees (default: 30.0)')
+    parser.add_argument('--max-phase', type=float, default=2.0,
+                      help='Maximum phase duration in seconds (default: 2.0)')
+    
+    parser.add_argument('--max-angle', type=float, default=10.0,
+                      help='Maximum finger angle in degrees (default: 10.0)')
     
     parser.add_argument('--wiggle-speed', type=float, default=5.0,
                       help='Maximum wiggle speed in degrees per control cycle (default: 5.0)')
@@ -588,9 +579,8 @@ def main():
             proximity_rate=args.proximity_rate,
             use_simulated_motors=args.simulate,
             motor_interface_kwargs=motor_kwargs,
-            phase_mean_duration=args.phase_mean,
-            phase_std_dev=args.phase_std,
             min_phase_duration=args.min_phase,
+            max_phase_duration=args.max_phase,
             max_angle=args.max_angle,
             wiggle_speed=args.wiggle_speed,
             min_fingers=args.min_fingers,
@@ -605,9 +595,9 @@ def main():
         # Monitor loop
         print("\nProximity-Aware Random Wiggle Test Active - Press Ctrl+C to stop")
         print("-----------------------------------------------------------")
-        print("This controller alternates between two phases with random durations:")
-        print(f"1. SENSOR_PHASE: Only reading from proximity sensors (μ={args.phase_mean}s, σ={args.phase_std}s)")
-        print(f"2. WIGGLE_PHASE: Only moving randomly selected fingers (μ={args.phase_mean}s, σ={args.phase_std}s)")
+        print("This controller alternates between two phases with uniform random durations:")
+        print(f"1. SENSOR_PHASE: Only reading from proximity sensors ({args.min_phase}-{args.max_phase}s)")
+        print(f"2. WIGGLE_PHASE: Only moving randomly selected fingers ({args.min_phase}-{args.max_phase}s)")
         print(f"Will select {args.min_fingers}-{args.max_fingers} fingers to wiggle each time")
         print(f"Maximum finger angle: {args.max_angle}°, Maximum wiggle speed: {args.wiggle_speed}°/cycle")
         print(f"Proximity threshold: {args.proximity_threshold}mm")
