@@ -12,6 +12,7 @@ This document provides a comprehensive guide to the prosthetic hand controllers 
    - [Continuous Random Wiggle Controller](#continuous-random-wiggle-controller)
    - [Proximity Aware Wiggle Controller](#proximity-aware-wiggle-controller)
    - [Idle Wiggle Grasp Controller](#idle-wiggle-grasp-controller)
+   - [Continuous Wiggle Grasp Controller](#continuous-wiggle-grasp-controller)
 4. [Key Concepts](#key-concepts)
    - [Phase-Based Control](#phase-based-control)
    - [State Machine Implementation](#state-machine-implementation)
@@ -147,7 +148,7 @@ This controller adds proximity sensor reading capabilities to the continuous ran
 
 **File: idle_wiggle_grasp_controller.py**
 
-This is the most advanced controller, implementing a complete state machine with proximity-triggered grasping behavior. It combines all features from previous controllers and adds state-based behavior changes.
+This controller implements a complete state machine with proximity-triggered grasping behavior. It combines all features from previous controllers and adds state-based behavior changes.
 
 **Key Features:**
 - Full state machine: IDLE, THUMB_OPPOSING, GRASP_FORMING
@@ -176,11 +177,43 @@ This is the most advanced controller, implementing a complete state machine with
    - Return to IDLE if object removed (with hysteresis)
 
 **Key Methods:**
-- `_handle_idle_state()`: Manages wiggling behavior
-- `_handle_thumb_opposing_state()`: Positions thumb for grasping
-- `_handle_grasp_forming_state()`: Controls grasping movement
-- `_process_proximity_readings()`: Implements multi-layer debouncing
+- `_execute_idle_wiggle()`: Manages wiggling behavior
+- `_position_thumb_for_opposition()`: Positions thumb for grasping
+- `_execute_grasp()`: Controls grasping movement
+- `_update_state()`: Implements multi-layer debouncing
 - `_select_random_fingers()`: Randomizes finger selection for each movement phase
+
+### Continuous Wiggle Grasp Controller
+
+**File: continuous_wiggle_grasp_controller.py**
+
+This controller extends the Idle Wiggle Grasp Controller by maintaining continuous random wiggling throughout all states, including during grasping. It introduces the concept of state-dependent wiggle scaling.
+
+**Key Features:**
+- Continuous random wiggling during ALL states (IDLE, THUMB_OPPOSING, GRASP_FORMING)
+- State-dependent wiggle amplitude scaling
+- Base position + wiggle offset movement model
+- All proximity-triggered grasping functionality
+- Enhanced visualization showing base positions and wiggle components
+
+**Implementation Details:**
+- Movement model: Base positions + scaled wiggle offsets
+- Wiggle scaling: Full amplitude in IDLE, reduced in other states (configurable)
+- Base positions: Different for each state (open in IDLE, thumb opposed in THUMB_OPPOSING, etc.)
+- State transitions: Same as Idle Wiggle Grasp Controller
+- Finger selection: Random subset of fingers selected for each movement phase
+
+**State-Based Wiggle Scaling:**
+- IDLE: 100% wiggle amplitude (default)
+- THUMB_OPPOSING: 60% wiggle amplitude (default)
+- GRASP_FORMING: 40% wiggle amplitude (default)
+
+**Key Methods:**
+- `_execute_idle_movement()`: Sets base positions for IDLE state
+- `_execute_opposing_movement()`: Sets base positions for THUMB_OPPOSING state
+- `_execute_grasp_movement()`: Sets base positions for GRASP_FORMING state
+- `_apply_wiggle_movement()`: Applies scaled wiggle on top of base positions
+- `_update_wiggle_targets()`: Generates random wiggle offsets with smart direction changes
 
 ## Key Concepts
 
@@ -226,7 +259,7 @@ def _toggle_phase(self):
 
 ### State Machine Implementation
 
-The state machine pattern is fully implemented in the Idle Wiggle Grasp Controller, providing distinct behavioral modes based on environmental conditions.
+The state machine pattern is fully implemented in the Idle Wiggle Grasp Controller and Continuous Wiggle Grasp Controller, providing distinct behavioral modes based on environmental conditions.
 
 **States:**
 1. **IDLE**: Default state with continuous random finger wiggling
@@ -235,7 +268,7 @@ The state machine pattern is fully implemented in the Idle Wiggle Grasp Controll
 
 **Transition Logic:**
 - IDLE → THUMB_OPPOSING: Triggered by consistent object detection
-- THUMB_OPPOSING → GRASP_FORMING: Automatic after thumb positioning
+- THUMB_OPPOSING → GRASP_FORMING: Triggered by thumb detection of object
 - THUMB_OPPOSING → IDLE: If object lost during positioning
 - GRASP_FORMING → IDLE: If object removed (with hysteresis)
 
@@ -419,6 +452,16 @@ These parameters are specific to the Idle Wiggle Grasp Controller:
 | `MAX_FINGERS_TO_WIGGLE` | Maximum fingers to wiggle | 3 |
 | `DETECTION_HYSTERESIS` | Difference between detection and release thresholds | 20mm |
 
+### Continuous Wiggle Grasp Parameters
+
+These parameters are specific to the Continuous Wiggle Grasp Controller:
+
+| Parameter | Description | Typical Value |
+|-----------|-------------|---------------|
+| `idle_wiggle_scale` | Wiggle amplitude scaling factor in IDLE state | 1.0 (100%) |
+| `opposing_wiggle_scale` | Wiggle amplitude scaling factor in THUMB_OPPOSING state | 0.6 (60%) |
+| `grasp_wiggle_scale` | Wiggle amplitude scaling factor in GRASP_FORMING state | 0.4 (40%) |
+
 ## Extension Guide
 
 ### Adding a New Controller
@@ -474,10 +517,55 @@ These areas are designed for extension:
 1. Enable DEBUG level logging to see detailed operation
 2. Add temporary print statements for specific values
 3. Use the visualization to track finger positions and state changes
-4. Run with the `--verbose` flag for additional diagnostic information
+4. Run with the `--debug` flag for additional diagnostic information
 
 ## Conclusion
 
 This documentation provides a comprehensive guide to the prosthetic hand controllers developed in this project. By understanding the core design patterns, implementation details, and extension points, developers can effectively maintain and extend these controllers for future applications.
 
 The modular, phase-based architecture ensures safe and reliable operation while providing a flexible foundation for advanced behavior development. The progression from simple phase toggling to complex state machines with proximity-triggered behavior demonstrates the evolutionary development approach used in this project.
+
+## Continuous Wiggle Grasp Controller Details
+
+### Movement Model
+
+The continuous wiggle grasp controller implements a sophisticated movement model that superimposes wiggling on top of base positions:
+
+```
+final_position = base_position + (wiggle_offset * state_scale_factor)
+```
+
+Where:
+- `base_position`: The core position for each finger based on the current state (e.g., open in IDLE, closed in GRASP_FORMING)
+- `wiggle_offset`: The random wiggle component calculated with correlation and smart direction changes
+- `state_scale_factor`: A scaling factor that reduces wiggle amplitude based on state (1.0 for IDLE, 0.6 for THUMB_OPPOSING, 0.4 for GRASP_FORMING)
+
+This approach allows the hand to maintain its functional grasping behavior while adding lifelike continuous movement.
+
+### Theoretical Foundation
+
+The continuous wiggle grasp controller is built on several key theoretical principles:
+
+1. **Superposition of Movements**: Base positions and wiggle components are mathematically superimposed, allowing for simultaneous functional movement (grasping) and aesthetic movement (wiggling).
+
+2. **Progressive Amplitude Reduction**: As the hand transitions through states requiring more precision (approaching and grasping), the wiggle amplitude is progressively reduced to maintain functionality while preserving lifelike qualities.
+
+3. **Partially Correlated Random Movement**: The 60% correlation factor between fingers creates coordinated but not identical movements, mimicking natural biological systems where finger movements show some correlation but maintain individuality.
+
+4. **State-Aware Behavior**: The controller maintains awareness of its current state and adapts both the base positions and wiggle scaling appropriately, creating context-sensitive behavior.
+
+### Using the Controller
+
+To run the continuous wiggle grasp controller:
+
+```bash
+python3 continuous_wiggle_grasp_controller.py [options]
+```
+
+The controller will display real-time visualization of finger positions, proximity readings, and state information. The visualization includes indicators for base positions and wiggle components, making it easy to see how the wiggling is superimposed on the functional grasping positions.
+
+Key features to observe:
+- Continuous wiggling across all states
+- Reduced wiggle amplitude during grasping
+- Base position markers showing the functional position
+- State transition messages as objects are detected
